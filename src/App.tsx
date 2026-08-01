@@ -89,53 +89,68 @@ export default function App() {
   };
 
   // Step 1 Save
-  const handleSaveStep1 = (step1Data: Step1Data) => {
+  const handleSaveStep1 = (step1Data: Step1Data, moveNext = true) => {
     if (!currentStudent || !currentSubmission) return;
+
+    const currentStatus = currentSubmission.status;
+    const newStatus = (currentStatus === 'completed' || currentStatus === 'step3' || currentStatus === 'step2')
+      ? currentStatus
+      : 'step1';
 
     const updated: StudentSubmission = {
       ...currentSubmission,
       step1: step1Data,
-      status: currentSubmission.status === 'completed' ? 'completed' : 'step1_saved',
+      status: newStatus,
       updatedAt: new Date().toLocaleString('ko-KR')
     };
 
     updateSingleSubmission(updated);
     setSubmissions(loadSubmissions());
-    setActiveStep(2);
+    if (moveNext) setActiveStep(2);
   };
 
   // Step 2 Save
-  const handleSaveStep2 = (step2Data: Step2Data) => {
+  const handleSaveStep2 = (step2Data: Step2Data, moveNext = true) => {
     if (!currentStudent || !currentSubmission) return;
+
+    const currentStatus = currentSubmission.status;
+    const newStatus = (currentStatus === 'completed' || currentStatus === 'step3')
+      ? currentStatus
+      : 'step2';
 
     const updated: StudentSubmission = {
       ...currentSubmission,
       step2: step2Data,
+      status: newStatus,
       updatedAt: new Date().toLocaleString('ko-KR')
     };
 
     updateSingleSubmission(updated);
     setSubmissions(loadSubmissions());
-    setActiveStep(3);
+    if (moveNext) setActiveStep(3);
   };
 
   // Step 3 Save
-  const handleSaveStep3 = (step3Data: Step3Data) => {
+  const handleSaveStep3 = (step3Data: Step3Data, moveNext = true) => {
     if (!currentStudent || !currentSubmission) return;
+
+    const currentStatus = currentSubmission.status;
+    const newStatus = currentStatus === 'completed' ? 'completed' : 'step3';
 
     const updated: StudentSubmission = {
       ...currentSubmission,
       step3: step3Data,
+      status: newStatus,
       updatedAt: new Date().toLocaleString('ko-KR')
     };
 
     updateSingleSubmission(updated);
     setSubmissions(loadSubmissions());
-    setActiveStep(4);
+    if (moveNext) setActiveStep(4);
   };
 
-  // Step 4 Final Submit
-  const handleFinalSubmit = (step4Data: Step4Data) => {
+  // Step 4 Final Submit / Save
+  const handleFinalSubmit = (step4Data: Step4Data, isFinalAlert = true) => {
     if (!currentStudent || !currentSubmission) return;
 
     const updated: StudentSubmission = {
@@ -147,7 +162,9 @@ export default function App() {
 
     updateSingleSubmission(updated);
     setSubmissions(loadSubmissions());
-    alert(`수행평가가 성공적으로 제출되었습니다!\n마지막 제출 시간: ${step4Data.finalSubmittedAt}`);
+    if (isFinalAlert) {
+      alert(`수행평가가 성공적으로 제출되었습니다!\n마지막 제출 시간: ${step4Data.finalSubmittedAt}`);
+    }
   };
 
   return (

@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Step2Data, Step3Data } from '../types';
 import { Edit3, Info, ArrowRight, ArrowLeft, CheckCircle2, RefreshCw, Music2 } from 'lucide-react';
 
 interface Props {
   step2Data: Step2Data;
   initialData: Step3Data | null;
-  onSaveStep3: (data: Step3Data) => void;
+  onSaveStep3: (data: Step3Data, moveNext?: boolean) => void;
   onBack: () => void;
 }
 
@@ -32,6 +32,18 @@ export const Step3LyricsReview: React.FC<Props> = ({
   );
 
   const isModified = editedLyrics.trim() !== step2Data.generatedLyrics.trim();
+
+  // Auto-save on lyrics change
+  useEffect(() => {
+    if (editedLyrics) {
+      const data: Step3Data = {
+        editedLyrics,
+        hasSelfEdited: isModified,
+        reviewedAt: new Date().toLocaleString('ko-KR')
+      };
+      onSaveStep3(data, false);
+    }
+  }, [editedLyrics, isModified]);
 
   const originalTitle = getSongTitle(step2Data.generatedLyrics);
   const currentTitle = getSongTitle(editedLyrics);

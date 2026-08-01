@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Step1Data, Step2Data, Step3Data, Step4Data, StudentRosterItem } from '../types';
 import { Music2, ExternalLink, Copy, Check, Send, ArrowLeft, CheckCircle2, FileText, Clock } from 'lucide-react';
 
@@ -8,7 +8,7 @@ interface Props {
   step2Data: Step2Data;
   step3Data: Step3Data;
   initialData: Step4Data | null;
-  onSubmitFinal: (data: Step4Data) => void;
+  onSubmitFinal: (data: Step4Data, isFinalAlert?: boolean) => void;
   onBack: () => void;
   isCompleted: boolean;
 }
@@ -26,6 +26,17 @@ export const Step4SunoSubmission: React.FC<Props> = ({
   const [sunoUrl, setSunoUrl] = useState<string>(initialData?.sunoUrl || '');
   const [copiedPrompt, setCopiedPrompt] = useState<boolean>(false);
   const [copiedLyrics, setCopiedLyrics] = useState<boolean>(false);
+
+  // Auto-save sunoUrl on input change
+  useEffect(() => {
+    if (sunoUrl.trim()) {
+      const data: Step4Data = {
+        sunoUrl: sunoUrl.trim(),
+        finalSubmittedAt: initialData?.finalSubmittedAt || new Date().toLocaleString('ko-KR')
+      };
+      onSubmitFinal(data, false);
+    }
+  }, [sunoUrl]);
 
   const handleCopyPromptStyle = () => {
     const text = `${step2Data.genre}, middle school science song, upbeat, clear vocals, ${step2Data.situationPrompt}`;

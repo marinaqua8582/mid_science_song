@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { StudentSubmission, StudentRosterItem, AppSettings, RubricCriterion } from '../types';
 import { saveRoster, saveSettings, updateSingleSubmission, syncRosterToGAS } from '../utils/storage';
 import { PrintableReport } from './PrintableReport';
+import { diffLyrics } from '../utils/diff';
 import * as XLSX from 'xlsx';
 import {
   Lock, KeyRound, Users, FileCheck, Award, Link, Download, Upload,
   Search, Printer, CheckCircle2, Sliders, ExternalLink, Copy, Check,
-  Plus, Trash2, Eye, X, RefreshCw, AlertCircle, Save
+  Plus, Trash2, Eye, X, RefreshCw, AlertCircle, Save, Sparkles
 } from 'lucide-react';
 
 interface Props {
@@ -41,6 +43,13 @@ export const TeacherDashboard: React.FC<Props> = ({
   // Active Tab: 'status' | 'roster' | 'rubrics' | 'gas' | 'password'
   const [activeTab, setActiveTab] = useState<'status' | 'roster' | 'rubrics' | 'gas' | 'password'>('status');
 
+  // Editable Rubrics state for Teacher customization
+  const [editableRubrics, setEditableRubrics] = useState<RubricCriterion[]>(settings.rubrics);
+
+  useEffect(() => {
+    setEditableRubrics(settings.rubrics);
+  }, [settings.rubrics]);
+
   // Filters for Status view
   const [classFilter, setClassFilter] = useState<string>('all');
   const [unitFilter, setUnitFilter] = useState<string>('all');
@@ -51,12 +60,53 @@ export const TeacherDashboard: React.FC<Props> = ({
   const [selectedStudentSub, setSelectedStudentSub] = useState<StudentSubmission | null>(null);
   const [scoringValues, setScoringValues] = useState<Record<string, number>>({});
   const [feedbackText, setFeedbackText] = useState<string>('');
-  const [isPrintMode, setIsPrintMode] = useState<boolean>(false);
 
   // Copy indicator for GAS code
   const [copiedGas, setCopiedGas] = useState<boolean>(false);
   const [gasUrlInput, setGasUrlInput] = useState<string>(settings.gasUrl || '');
-  const [gasTestStatus, setGasTestStatus] = useState<string>('');
+
+  // Handle Rubric Editing
+  const handleAddRubric = () => {
+    const newRubric: RubricCriterion = {
+      id: `rubric-${Date.now()}`,
+      title: '새 평가 항목',
+      description: '채점 세부 기준 및 내용을 작성하세요.',
+      maxPoints: 10
+    };
+    setEditableRubrics([...editableRubrics, newRubric]);
+  };
+
+  const handleUpdateRubric = (id: string, field: keyof RubricCriterion, value: any) => {
+    setEditableRubrics(prev =>
+      prev.map(r => (r.id === id ? { ...r, [field]: value } : r))
+    );
+  };
+
+  const handleDeleteRubric = (id: string) => {
+    if (editableRubrics.length <= 1) {
+      alert('채점 기준표에는 최소 1개 이상의 평가 항목이 필요합니다.');
+      return;
+    }
+    if (confirm('이 채점 항목을 삭제하시겠습니까?')) {
+      setEditableRubrics(prev => prev.filter(r => r.id !== id));
+    }
+  };
+
+  const handleSaveRubrics = () => {
+    for (const r of editableRubrics) {
+      if (!r.title.trim()) {
+        alert('모든 평가 항목의 제목을 입력해주세요.');
+        return;
+      }
+    }
+    const updatedSettings: AppSettings = {
+      ...settings,
+      rubrics: editableRubrics
+    };
+    saveSettings(updatedSettings);
+    onUpdateSettings(updatedSettings);
+    alert('수행평가 채점 기준표가 성공적으로 변경 및 저장되었습니다!');
+  };
 
   // Handle PIN Auth
   const handlePinSubmit = (e: React.FormEvent) => {
@@ -231,11 +281,20 @@ export const TeacherDashboard: React.FC<Props> = ({
     alert('Google Sheets / GAS 설정이 저장되었습니다.');
   };
 
+  // Helper to determine status key
+  const getStatusKey = (sub: StudentSubmission): 'completed' | 'step3' | 'step2' | 'step1' | 'not_started' => {
+    if (sub.status === 'completed' || sub.step4?.finalSubmittedAt) return 'completed';
+    if (sub.status === 'step3' || sub.step3) return 'step3';
+    if (sub.status === 'step2' || sub.step2) return 'step2';
+    if (sub.status === 'step1' || sub.status === 'step1_saved' || sub.step1) return 'step1';
+    return 'not_started';
+  };
+
   // Filter Submissions
   const filteredSubmissions = submissions.filter(sub => {
     if (classFilter !== 'all' && sub.classNum !== Number(classFilter)) return false;
     if (unitFilter !== 'all' && sub.step1?.unit !== unitFilter) return false;
-    if (statusFilter !== 'all' && sub.status !== statusFilter) return false;
+    if (statusFilter !== 'all' && getStatusKey(sub) !== statusFilter) return false;
     if (searchQuery.trim() && !sub.name.includes(searchQuery.trim())) return false;
     return true;
   });
@@ -480,8 +539,10 @@ export const TeacherDashboard: React.FC<Props> = ({
                 className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:outline-none"
               >
                 <option value="all">전체 상태</option>
-                <option value="completed">최종 제출 완료</option>
-                <option value="step1_saved">1단계 진행</option>
+                <option value="completed">최종 완료</option>
+                <option value="step1">1단계 완료</option>
+                <option value="step2">2단계 완료</option>
+                <option value="step3">3단계 완료</option>
                 <option value="not_started">미작성</option>
               </select>
             </div>
@@ -537,21 +598,21 @@ export const TeacherDashboard: React.FC<Props> = ({
                           )}
                         </td>
                         <td className="p-3">
-                          {sub.status === 'completed' && (
-                            <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded font-bold">
-                              최종 완료
-                            </span>
-                          )}
-                          {sub.status === 'step1_saved' && (
-                            <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded font-semibold">
-                              1단계 저장
-                            </span>
-                          )}
-                          {sub.status === 'not_started' && (
-                            <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded">
-                              미작성
-                            </span>
-                          )}
+                          {(() => {
+                            const key = getStatusKey(sub);
+                            switch (key) {
+                              case 'completed':
+                                return <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded font-bold">최종 완료</span>;
+                              case 'step3':
+                                return <span className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded font-semibold">3단계 완료</span>;
+                              case 'step2':
+                                return <span className="px-2 py-0.5 bg-purple-100 text-purple-800 rounded font-semibold">2단계 완료</span>;
+                              case 'step1':
+                                return <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded font-semibold">1단계 완료</span>;
+                              default:
+                                return <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded">미작성</span>;
+                            }
+                          })()}
                         </td>
                         <td className="p-3">
                           {sub.step4?.sunoUrl ? (
@@ -656,25 +717,83 @@ export const TeacherDashboard: React.FC<Props> = ({
       {/* TAB 3: RUBRICS CONFIGURATION */}
       {activeTab === 'rubrics' && (
         <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
-          <div>
-            <h3 className="text-lg font-bold text-slate-900">평가 기준 (Rubric) 설정</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              과학송 수행평가에 적용할 채점 항목 및 만점 기준을 확인합니다.
-            </p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-4">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">수행평가 채점 기준표 (Rubric) 설정 및 편집</h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                교사가 과목 및 수행평가 목적에 맞춰 평가 항목, 내용 및 배점 기준을 직접 추가·수정할 수 있습니다.
+              </p>
+            </div>
+
+            <button
+              onClick={handleAddRubric}
+              className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 shrink-0 self-start sm:self-auto border border-indigo-200"
+            >
+              <Plus className="w-4 h-4" /> 채점 항목 추가
+            </button>
           </div>
 
-          <div className="space-y-3">
-            {settings.rubrics.map((rubric, idx) => (
-              <div key={rubric.id} className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
-                <div className="flex items-center justify-between font-bold text-sm text-slate-900">
-                  <span>{idx + 1}. {rubric.title}</span>
-                  <span className="px-2.5 py-0.5 bg-indigo-100 text-indigo-800 rounded text-xs font-black">
-                    만점: {rubric.maxPoints}점
-                  </span>
+          <div className="space-y-4">
+            {editableRubrics.map((rubric, idx) => (
+              <div key={rubric.id} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-1">
+                    <span className="text-xs font-bold text-slate-500 shrink-0">항목 {idx + 1}</span>
+                    <input
+                      type="text"
+                      value={rubric.title}
+                      onChange={(e) => handleUpdateRubric(rubric.id, 'title', e.target.value)}
+                      placeholder="평가 항목 제목 (예: 과학 지식 이해도)"
+                      className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-xs font-semibold text-slate-600">배점 만점:</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={rubric.maxPoints}
+                        onChange={(e) => handleUpdateRubric(rubric.id, 'maxPoints', Number(e.target.value))}
+                        className="w-16 px-2 py-1 bg-white border border-slate-300 rounded-lg text-center text-xs font-bold text-indigo-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                      />
+                      <span className="text-xs font-bold text-slate-600">점</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteRubric(rubric.id)}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all shrink-0"
+                      title="항목 삭제"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-                <p className="text-xs text-slate-600">{rubric.description}</p>
+
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 mb-1 block">평가 세부 기준 및 내용</label>
+                  <textarea
+                    rows={2}
+                    value={rubric.description}
+                    onChange={(e) => handleUpdateRubric(rubric.id, 'description', e.target.value)}
+                    placeholder="해당 평가 항목에 대한 구체적인 채점 기준을 작성하세요."
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
               </div>
             ))}
+          </div>
+
+          <div className="flex justify-end pt-2 border-t border-slate-200">
+            <button
+              onClick={handleSaveRubrics}
+              className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow transition-all text-xs flex items-center gap-2"
+            >
+              <Save className="w-4 h-4" /> 채점 기준표 변경사항 저장
+            </button>
           </div>
         </div>
       )}
@@ -861,6 +980,39 @@ export const TeacherDashboard: React.FC<Props> = ({
                   </div>
                 </div>
 
+                {/* Step 2 Prompt Inputs */}
+                <div className="p-4 bg-purple-50 border border-purple-200 rounded-2xl space-y-2 text-xs">
+                  <div className="flex items-center justify-between border-b border-purple-200 pb-1.5">
+                    <span className="font-bold text-purple-950 flex items-center gap-1.5 text-xs">
+                      <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                      [2단계] 프롬프트 작성 내용 (음악 스타일 & 가사 구조)
+                    </span>
+                    <span className="px-2.5 py-0.5 bg-purple-600 text-white font-bold rounded-md text-[11px]">
+                      장르: {selectedStudentSub.step2?.genre || '미선택'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+                    <div className="bg-white p-2.5 rounded-xl border border-purple-100 shadow-xs space-y-1">
+                      <span className="font-bold text-purple-900 block text-[11px]">① 가사 구조 설계</span>
+                      <p className="text-slate-700 whitespace-pre-wrap leading-relaxed text-[11px]">
+                        {selectedStudentSub.step2?.structurePrompt || '미작성'}
+                      </p>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-xl border border-purple-100 shadow-xs space-y-1">
+                      <span className="font-bold text-purple-900 block text-[11px]">② 상황 설정</span>
+                      <p className="text-slate-700 whitespace-pre-wrap leading-relaxed text-[11px]">
+                        {selectedStudentSub.step2?.situationPrompt || '미작성'}
+                      </p>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-xl border border-purple-100 shadow-xs space-y-1">
+                      <span className="font-bold text-purple-900 block text-[11px]">③ 추가 요구사항</span>
+                      <p className="text-slate-700 whitespace-pre-wrap leading-relaxed text-[11px]">
+                        {selectedStudentSub.step2?.customPrompt || '미작성'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="p-4 bg-purple-950 text-purple-100 rounded-2xl font-mono text-xs space-y-1">
                     <div className="font-bold text-purple-300 border-b border-purple-800 pb-1 mb-2">
@@ -874,11 +1026,25 @@ export const TeacherDashboard: React.FC<Props> = ({
                   <div className="p-4 bg-teal-950 text-teal-100 rounded-2xl font-mono text-xs space-y-1">
                     <div className="font-bold text-teal-300 border-b border-teal-800 pb-1 mb-2 flex justify-between">
                       <span>[3단계] 학생 자가 수정 가사</span>
-                      <span>{selectedStudentSub.step3?.hasSelfEdited ? '자가 수정됨' : '원본 유지'}</span>
+                      <span className="text-amber-400 font-bold">
+                        {selectedStudentSub.step3?.hasSelfEdited ? '(수정 부분 밑줄 표시됨)' : '(원본 유지)'}
+                      </span>
                     </div>
-                    <pre className="whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto font-semibold">
-                      {selectedStudentSub.step3?.editedLyrics || '미수정'}
-                    </pre>
+                    <div className="whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto font-sans">
+                      {diffLyrics(selectedStudentSub.step2?.generatedLyrics || '', selectedStudentSub.step3?.editedLyrics || '').map((chunk, idx) =>
+                        chunk.isModified ? (
+                          <u
+                            key={idx}
+                            className="underline underline-offset-2 decoration-amber-400 decoration-2 font-bold text-white bg-amber-500/30 px-0.5 rounded-xs"
+                            title="학생이 새로 수정/추가한 부분"
+                          >
+                            {chunk.text}
+                          </u>
+                        ) : (
+                          <span key={idx}>{chunk.text}</span>
+                        )
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -949,17 +1115,18 @@ export const TeacherDashboard: React.FC<Props> = ({
                   </button>
                 </div>
               </div>
-
-              {/* Printable Component for window.print() */}
-              <div className="hidden print:block">
-                <PrintableReport
-                  submission={selectedStudentSub}
-                  rubrics={settings.rubrics}
-                />
-              </div>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Portal for isolated print view */}
+      {selectedStudentSub && typeof document !== 'undefined' && document.getElementById('print-root') && createPortal(
+        <PrintableReport
+          submission={selectedStudentSub}
+          rubrics={settings.rubrics}
+        />,
+        document.getElementById('print-root')!
       )}
       </main>
     </div>

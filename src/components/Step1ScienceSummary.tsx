@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ScienceUnit, Step1Data } from '../types';
 import { SCIENCE_UNITS } from '../data/units';
 import { Utensils, HeartPulse, Wind, Droplets, CheckCircle2, ArrowRight, HelpCircle, Plus, X, Tag } from 'lucide-react';
 
 interface Props {
   initialData: Step1Data | null;
-  onSaveStep1: (data: Step1Data) => void;
+  onSaveStep1: (data: Step1Data, moveNext?: boolean) => void;
 }
 
 export const Step1ScienceSummary: React.FC<Props> = ({ initialData, onSaveStep1 }) => {
@@ -13,6 +13,19 @@ export const Step1ScienceSummary: React.FC<Props> = ({ initialData, onSaveStep1 
   const [summaryText, setSummaryText] = useState<string>(initialData?.summary || '');
   const [keywords, setKeywords] = useState<string[]>(initialData?.keywords || []);
   const [keywordInput, setKeywordInput] = useState<string>('');
+
+  // Auto-save on state change
+  useEffect(() => {
+    if (summaryText.trim() || keywords.length > 0) {
+      const data: Step1Data = {
+        unit: selectedUnit,
+        summary: summaryText,
+        keywords,
+        savedAt: new Date().toLocaleString('ko-KR')
+      };
+      onSaveStep1(data, false);
+    }
+  }, [selectedUnit, summaryText, keywords]);
 
   const currentUnitInfo = SCIENCE_UNITS[selectedUnit];
 

@@ -69,7 +69,7 @@ export interface StudentSubmission {
   classNum: number;
   studentNum: number;
   name: string;
-  status: 'not_started' | 'step1_saved' | 'completed';
+  status: 'not_started' | 'step1' | 'step2' | 'step3' | 'completed' | 'step1_saved';
   step1: Step1Data | null;
   step2: Step2Data | null;
   step3: Step3Data | null;

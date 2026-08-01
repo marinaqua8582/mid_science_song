@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Step1Data, Step2Data } from '../types';
 import { Music, Sparkles, Loader2, ArrowRight, ArrowLeft, Wand2, Copy, Check, MessageSquareCode } from 'lucide-react';
 
 interface Props {
   step1Data: Step1Data;
   initialData: Step2Data | null;
-  onSaveStep2: (data: Step2Data) => void;
+  onSaveStep2: (data: Step2Data, moveNext?: boolean) => void;
   onBack: () => void;
 }
 
@@ -38,6 +38,21 @@ export const Step2PromptBuilder: React.FC<Props> = ({
   );
 
   const [generatedLyrics, setGeneratedLyrics] = useState<string>(initialData?.generatedLyrics || '');
+
+  // Auto-save on prompt or lyrics change
+  useEffect(() => {
+    if (genre || structurePrompt || situationPrompt || customPrompt || generatedLyrics) {
+      const data: Step2Data = {
+        genre,
+        structurePrompt,
+        situationPrompt,
+        customPrompt,
+        generatedLyrics,
+        generatedAt: new Date().toLocaleString('ko-KR')
+      };
+      onSaveStep2(data, false);
+    }
+  }, [genre, structurePrompt, situationPrompt, customPrompt, generatedLyrics]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorText, setErrorText] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
