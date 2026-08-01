@@ -191,6 +191,39 @@ function doPost(e) {
     res.type("text/plain").send(gasCode);
   });
 
+  // GAS Proxy Endpoint to bypass browser CORS constraints when syncing to Google Apps Script
+  app.post("/api/sync-gas", async (req, res) => {
+    try {
+      const { gasUrl, payload } = req.body;
+      if (!gasUrl) {
+        return res.status(400).json({ error: "gasUrl이 필요합니다." });
+      }
+
+      const response = await fetch(gasUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8",
+        },
+        body: typeof payload === "string" ? payload : JSON.stringify(payload),
+      });
+
+      const text = await response.text();
+      let resData;
+      try {
+        resData = JSON.parse(text);
+      } catch {
+        resData = { status: "success", raw: text };
+      }
+
+      return res.json(resData);
+    } catch (error: any) {
+      console.error("GAS proxy sync error:", error);
+      return res.status(500).json({
+        error: error?.message || "GAS 동기화 중 오류가 발생했습니다.",
+      });
+    }
+  });
+
   // Fallback 404 handler for unmatched API routes
   app.all("/api/*", (_req, res) => {
     res.status(404).json({ error: "요청하신 API 엔드포인트를 찾을 수 없습니다." });

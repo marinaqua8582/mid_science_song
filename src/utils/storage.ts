@@ -259,41 +259,103 @@ export function updateSingleSubmission(submission: StudentSubmission): void {
 }
 
 export async function syncSubmissionToGAS(gasUrl: string, submission: StudentSubmission): Promise<boolean> {
+  const payload = {
+    action: 'saveSubmission',
+    data: submission
+  };
+
+  // 1. Try server-side proxy endpoint first (avoids browser CORS restrictions)
+  try {
+    const proxyRes = await fetch('/api/sync-gas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gasUrl, payload })
+    });
+    if (proxyRes.ok) {
+      const data = await proxyRes.json();
+      if (data.status === 'success') return true;
+    }
+  } catch (e) {
+    // Proxy not reachable or static environment, fallback to direct browser fetch
+  }
+
+  // 2. Direct browser fetch
   try {
     const response = await fetch(gasUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'text/plain;charset=utf-8',
       },
-      body: JSON.stringify({
-        action: 'saveSubmission',
-        data: submission
-      })
+      body: JSON.stringify(payload)
     });
     const resData = await response.json();
     return resData.status === 'success';
   } catch (e) {
-    console.error('Error syncing to GAS:', e);
-    return false;
+    // 3. Fallback to mode: 'no-cors' to bypass CORS policy blocks in static client environments
+    try {
+      await fetch(gasUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: JSON.stringify(payload)
+      });
+      return true;
+    } catch (err) {
+      console.warn('GAS sync warning:', err);
+      return false;
+    }
   }
 }
 
 export async function syncRosterToGAS(gasUrl: string, roster: StudentRosterItem[]): Promise<boolean> {
+  const payload = {
+    action: 'saveRoster',
+    roster
+  };
+
+  // 1. Try server-side proxy endpoint first
+  try {
+    const proxyRes = await fetch('/api/sync-gas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gasUrl, payload })
+    });
+    if (proxyRes.ok) {
+      const data = await proxyRes.json();
+      if (data.status === 'success') return true;
+    }
+  } catch (e) {
+    // Proxy not reachable
+  }
+
+  // 2. Direct browser fetch
   try {
     const response = await fetch(gasUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'text/plain;charset=utf-8',
       },
-      body: JSON.stringify({
-        action: 'saveRoster',
-        roster
-      })
+      body: JSON.stringify(payload)
     });
     const resData = await response.json();
     return resData.status === 'success';
   } catch (e) {
-    console.error('Error syncing roster to GAS:', e);
-    return false;
+    // 3. Fallback to mode: 'no-cors'
+    try {
+      await fetch(gasUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: JSON.stringify(payload)
+      });
+      return true;
+    } catch (err) {
+      console.warn('GAS roster sync warning:', err);
+      return false;
+    }
   }
 }
