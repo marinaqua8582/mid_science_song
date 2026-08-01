@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { StudentSubmission, StudentRosterItem, AppSettings, RubricCriterion } from '../types';
-import { saveRoster, saveSettings, updateSingleSubmission, syncRosterToGAS, getGasUrl } from '../utils/storage';
+import { saveRoster, saveSettings, updateSingleSubmission, syncRosterToGAS, fetchRosterFromGAS, getGasUrl } from '../utils/storage';
 import { PrintableReport } from './PrintableReport';
 import { diffLyrics } from '../utils/diff';
 import * as XLSX from 'xlsx';
@@ -60,6 +60,13 @@ export const TeacherDashboard: React.FC<Props> = ({
   const [selectedStudentSub, setSelectedStudentSub] = useState<StudentSubmission | null>(null);
   const [scoringValues, setScoringValues] = useState<Record<string, number>>({});
   const [feedbackText, setFeedbackText] = useState<string>('');
+
+  // Single Student Addition state
+  const [singleGrade, setSingleGrade] = useState<number>(2);
+  const [singleClass, setSingleClass] = useState<number>(1);
+  const [singleNum, setSingleNum] = useState<number>(1);
+  const [singleName, setSingleName] = useState<string>('');
+  const [isSyncingRoster, setIsSyncingRoster] = useState<boolean>(false);
 
   // Copy indicator for GAS code
   const [copiedGas, setCopiedGas] = useState<boolean>(false);
@@ -220,7 +227,7 @@ export const TeacherDashboard: React.FC<Props> = ({
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       try {
         const bstr = evt.target?.result;
         const workbook = XLSX.read(bstr, { type: 'binary' });
@@ -250,17 +257,111 @@ export const TeacherDashboard: React.FC<Props> = ({
         saveRoster(newRosterItems);
         onUpdateRoster(newRosterItems);
 
-        if (settings.gasUrl) {
-          syncRosterToGAS(settings.gasUrl, newRosterItems);
-        }
+        setIsSyncingRoster(true);
+        await syncRosterToGAS(newRosterItems);
+        setIsSyncingRoster(false);
 
-        alert(`총 ${newRosterItems.length}명의 학생 명단이 새로 등록되었습니다!`);
+        alert(`총 ${newRosterItems.length}명의 학생 명단이 새로 등록 및 구글 시트에 동기화되었습니다!`);
       } catch (err) {
         console.error('Excel upload error:', err);
         alert('엑셀 파일 분석 중 오류가 발생했습니다. 양식을 확인해주세요.');
       }
     };
     reader.readAsBinaryString(file);
+  };
+
+  // Add single student manually
+  const handleAddSingleStudent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedName = singleName.trim();
+    if (!trimmedName) {
+      alert('학생 이름을 입력해주세요.');
+      return;
+    }
+
+    const numStr = singleNum < 10 ? `0${singleNum}` : `${singleNum}`;
+    const studentId = `${singleGrade}-${singleClass}-${numStr}`;
+
+    const newStudent: StudentRosterItem = {
+      id: studentId,
+      grade: singleGrade,
+      classNum: singleClass,
+      studentNum: singleNum,
+      name: trimmedName,
+    };
+
+    const existingIndex = roster.findIndex(
+      s => s.grade === singleGrade && s.classNum === singleClass && s.studentNum === singleNum
+    );
+
+    let updatedRoster: StudentRosterItem[];
+    if (existingIndex >= 0) {
+      updatedRoster = [...roster];
+      updatedRoster[existingIndex] = newStudent;
+    } else {
+      updatedRoster = [...roster, newStudent];
+    }
+
+    updatedRoster.sort((a, b) => {
+      if (a.classNum !== b.classNum) return a.classNum - b.classNum;
+      return a.studentNum - b.studentNum;
+    });
+
+    saveRoster(updatedRoster);
+    onUpdateRoster(updatedRoster);
+
+    setIsSyncingRoster(true);
+    await syncRosterToGAS(updatedRoster);
+    setIsSyncingRoster(false);
+
+    setSingleName('');
+    setSingleNum(prev => prev + 1);
+    alert(`${singleGrade}학년 ${singleClass}반 ${singleNum}번 '${trimmedName}' 학생이 성공적으로 추가되었습니다.`);
+  };
+
+  // Delete single student
+  const handleDeleteStudent = async (studentId: string, studentName: string) => {
+    if (!confirm(`'${studentName}' 학생을 명단에서 삭제하시겠습니까?`)) return;
+
+    const updatedRoster = roster.filter(s => s.id !== studentId);
+    saveRoster(updatedRoster);
+    onUpdateRoster(updatedRoster);
+
+    setIsSyncingRoster(true);
+    await syncRosterToGAS(updatedRoster);
+    setIsSyncingRoster(false);
+  };
+
+  // Clear entire roster
+  const handleClearRoster = async () => {
+    if (!confirm('등록된 모든 학생 명단을 삭제(초기화)하시겠습니까?\n이 작업은 구글 시트와 앱의 명단을 모두 비우며되돌릴 수 없습니다.')) return;
+
+    saveRoster([]);
+    onUpdateRoster([]);
+
+    setIsSyncingRoster(true);
+    const synced = await syncRosterToGAS([]);
+    setIsSyncingRoster(false);
+    
+    if (synced) {
+      alert('모든 학생 명단이 성공적으로 삭제(초기화)되었습니다.');
+    } else {
+      alert('앱의 학생 명단이 초기화되었습니다.');
+    }
+  };
+
+  // Fetch roster from GAS
+  const handleFetchRosterFromGAS = async () => {
+    setIsSyncingRoster(true);
+    try {
+      const fetched = await fetchRosterFromGAS();
+      onUpdateRoster(fetched);
+      alert(`구글 시트에서 총 ${fetched.length}명의 학생 명단을 불러왔습니다.`);
+    } catch (e) {
+      alert('구글 시트에서 학생 명단을 불러오는 중 오류가 발생했습니다.');
+    } finally {
+      setIsSyncingRoster(false);
+    }
   };
 
   // Copy GAS Code
@@ -812,22 +913,33 @@ function doPost(e) {
         <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
             <div>
-              <h3 className="text-lg font-bold text-slate-900">학생 명단 관리</h3>
+              <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Users className="w-5 h-5 text-indigo-600" /> 학생 명단 관리
+              </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                수행평가를 진행할 학생 명단을 엑셀 파일(.xlsx / .csv)로 일괄 등록합니다.
+                학생을 1명씩 개별 추가하거나 엑셀 파일로 일괄 등록할 수 있습니다. 등록된 명단은 구글 시트와 실시간 연동되어 다른 기기에서도 동일하게 공유됩니다.
               </p>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 items-center">
               <button
-                onClick={handleDownloadSampleExcel}
-                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5"
+                onClick={handleFetchRosterFromGAS}
+                disabled={isSyncingRoster}
+                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 border border-slate-200 disabled:opacity-50"
+                title="구글 시트의 최신 명단을 불러옵니다"
               >
-                <Download className="w-4 h-4" /> 엑셀 샘플 양식 다운로드
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingRoster ? 'animate-spin' : ''}`} /> 구글 시트 명단 동기화
               </button>
 
-              <label className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer">
-                <Upload className="w-4 h-4" /> 엑셀 파일 업로드
+              <button
+                onClick={handleDownloadSampleExcel}
+                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 border border-slate-200"
+              >
+                <Download className="w-3.5 h-3.5" /> 엑셀 샘플 양식
+              </button>
+
+              <label className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow transition-all flex items-center gap-1.5 cursor-pointer">
+                <Upload className="w-3.5 h-3.5" /> 엑셀 일괄 업로드
                 <input
                   type="file"
                   accept=".xlsx, .xls, .csv"
@@ -835,33 +947,143 @@ function doPost(e) {
                   className="hidden"
                 />
               </label>
+
+              <button
+                onClick={handleClearRoster}
+                className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 border border-rose-200"
+                title="모든 학생 명단 초기화 및 구글 시트 삭제"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> 명단 전체 삭제
+              </button>
             </div>
           </div>
 
-          {/* Roster Table */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                  <th className="p-3">식별 ID</th>
-                  <th className="p-3">학년</th>
-                  <th className="p-3">학급 (반)</th>
-                  <th className="p-3">번호</th>
-                  <th className="p-3">이름</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 text-slate-800 font-medium">
-                {roster.map((student) => (
-                  <tr key={student.id} className="hover:bg-slate-50">
-                    <td className="p-3 font-mono text-slate-500">{student.id}</td>
-                    <td className="p-3">{student.grade}학년</td>
-                    <td className="p-3 font-semibold text-indigo-700">{student.classNum}반</td>
-                    <td className="p-3">{student.studentNum}번</td>
-                    <td className="p-3 font-bold text-slate-900">{student.name}</td>
+          {/* Individual Student Addition Form Card */}
+          <div className="bg-indigo-50/60 border border-indigo-100 rounded-2xl p-4 space-y-3">
+            <div className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+              <Plus className="w-4 h-4 text-indigo-600" /> 개별 학생 1명씩 추가하기
+            </div>
+            <form onSubmit={handleAddSingleStudent} className="grid grid-cols-2 sm:grid-cols-5 gap-3 items-end">
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600 mb-1 block">학년</label>
+                <select
+                  value={singleGrade}
+                  onChange={(e) => setSingleGrade(Number(e.target.value))}
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value={1}>1학년</option>
+                  <option value={2}>2학년</option>
+                  <option value={3}>3학년</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600 mb-1 block">학급 (반)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={singleClass}
+                  onChange={(e) => setSingleClass(Number(e.target.value))}
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600 mb-1 block">번호</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={singleNum}
+                  onChange={(e) => setSingleNum(Number(e.target.value))}
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600 mb-1 block">학생 이름</label>
+                <input
+                  type="text"
+                  placeholder="예: 홍길동"
+                  value={singleName}
+                  onChange={(e) => setSingleName(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <button
+                  type="submit"
+                  disabled={isSyncingRoster}
+                  className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  <Plus className="w-4 h-4" /> 학생 등록
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Registered Roster Table */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs font-bold text-slate-700 px-1">
+              <span>현재 등록된 학생 ({roster.length}명)</span>
+              {isSyncingRoster && (
+                <span className="text-indigo-600 flex items-center gap-1 font-normal">
+                  <RefreshCw className="w-3 h-3 animate-spin" /> 구글 시트 동기화 중...
+                </span>
+              )}
+            </div>
+
+            <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                    <th className="p-3">식별 ID</th>
+                    <th className="p-3">학년</th>
+                    <th className="p-3">학급 (반)</th>
+                    <th className="p-3">번호</th>
+                    <th className="p-3">이름</th>
+                    <th className="p-3 text-center">삭제</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-200 text-slate-800 font-medium">
+                  {roster.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-12 text-center text-slate-400 space-y-2">
+                        <Users className="w-8 h-8 mx-auto text-slate-300" />
+                        <div className="font-bold text-slate-600 text-sm">등록된 학생이 없습니다.</div>
+                        <div className="text-xs text-slate-400">
+                          상단의 폼에 정보를 입력하여 1명씩 등록하거나, 엑셀 파일로 일괄 등록해주세요.
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    roster.map((student) => (
+                      <tr key={student.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-3 font-mono text-slate-500">{student.id}</td>
+                        <td className="p-3">{student.grade}학년</td>
+                        <td className="p-3 font-semibold text-indigo-700">{student.classNum}반</td>
+                        <td className="p-3">{student.studentNum}번</td>
+                        <td className="p-3 font-bold text-slate-900">{student.name}</td>
+                        <td className="p-3 text-center">
+                          <button
+                            onClick={() => handleDeleteStudent(student.id, student.name)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                            title="학생 삭제"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

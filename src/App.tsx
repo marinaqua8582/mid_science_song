@@ -5,7 +5,7 @@ import {
 } from './types';
 import {
   loadSettings, loadRoster, loadSubmissions, saveSubmissions,
-  updateSingleSubmission, getDefaultSettings, fetchStudentDataFromGAS
+  updateSingleSubmission, getDefaultSettings, fetchStudentDataFromGAS, fetchRosterFromGAS
 } from './utils/storage';
 import { PrivacyBanner } from './components/PrivacyBanner';
 import { StudentLogin } from './components/StudentLogin';
@@ -45,6 +45,15 @@ export default function App() {
     setSettings(loadedSettings);
     setRoster(loadedRoster);
     setSubmissions(loadedSubs);
+
+    // Sync latest roster from Google Sheets (GAS) across devices
+    fetchRosterFromGAS().then((gasRoster) => {
+      if (gasRoster && gasRoster.length > 0) {
+        setRoster(gasRoster);
+      }
+    }).catch((err) => {
+      console.warn('Initial roster fetch from GAS:', err);
+    });
   }, []);
 
   // Current student submission object derived from state

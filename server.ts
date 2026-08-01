@@ -143,6 +143,13 @@ function doPost(e) {
     var action = contents.action || 'saveSubmission';
     var sheet = SpreadsheetApp.getActiveSpreadsheet();
     
+    if (action === 'getRoster') {
+      var rosterSheet = sheet.getSheetByName('Roster') || sheet.insertSheet('Roster');
+      var rosterData = rosterSheet.getDataRange().getValues();
+      return ContentService.createTextOutput(JSON.stringify({ status: 'success', data: rosterData }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    
     if (action === 'getStudentData' || action === 'getSubmission') {
       var subSheet = sheet.getSheetByName('Submissions') || sheet.insertSheet('Submissions');
       var allRows = subSheet.getDataRange().getValues();

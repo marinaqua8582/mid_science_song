@@ -51,29 +51,7 @@ export const SCIENCE_UNITS: Record<ScienceUnit, UnitInfo> = {
   }
 };
 
-export const DEFAULT_ROSTER: StudentRosterItem[] = [
-  { id: '2-1-01', grade: 2, classNum: 1, studentNum: 1, name: '강민준' },
-  { id: '2-1-02', grade: 2, classNum: 1, studentNum: 2, name: '김서연' },
-  { id: '2-1-03', grade: 2, classNum: 1, studentNum: 3, name: '박도현' },
-  { id: '2-1-04', grade: 2, classNum: 1, studentNum: 4, name: '성지우' },
-  { id: '2-1-05', grade: 2, classNum: 1, studentNum: 5, name: '이하은' },
-  { id: '2-1-06', grade: 2, classNum: 1, studentNum: 6, name: '장현우' },
-  { id: '2-1-07', grade: 2, classNum: 1, studentNum: 7, name: '최윤아' },
-  { id: '2-1-08', grade: 2, classNum: 1, studentNum: 8, name: '한준서' },
-
-  { id: '2-2-01', grade: 2, classNum: 2, studentNum: 1, name: '권우진' },
-  { id: '2-2-02', grade: 2, classNum: 2, studentNum: 2, name: '김나은' },
-  { id: '2-2-03', grade: 2, classNum: 2, studentNum: 3, name: '노동하' },
-  { id: '2-2-04', grade: 2, classNum: 2, studentNum: 4, name: '민수아' },
-  { id: '2-2-05', grade: 2, classNum: 2, studentNum: 5, name: '박건우' },
-  { id: '2-2-06', grade: 2, classNum: 2, studentNum: 6, name: '송지아' },
-
-  { id: '2-3-01', grade: 2, classNum: 3, studentNum: 1, name: '김동현' },
-  { id: '2-3-02', grade: 2, classNum: 3, studentNum: 2, name: '류민서' },
-  { id: '2-3-03', grade: 2, classNum: 3, studentNum: 3, name: '박준혁' },
-  { id: '2-3-04', grade: 2, classNum: 3, studentNum: 4, name: '윤하린' },
-  { id: '2-3-05', grade: 2, classNum: 3, studentNum: 5, name: '임재윤' }
-];
+export const DEFAULT_ROSTER: StudentRosterItem[] = [];
 
 export const DEFAULT_RUBRICS: RubricCriterion[] = [
   {

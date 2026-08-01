@@ -21,6 +21,18 @@ export const StudentLogin: React.FC<Props> = ({ roster, isLoading = false, onLog
     return classes.length > 0 ? classes : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
   }, [roster]);
 
+  // Auto-fill student name if found in roster
+  React.useEffect(() => {
+    if (selectedClass > 0 && selectedNum > 0) {
+      const match = roster.find(
+        r => Number(r.classNum) === Number(selectedClass) && Number(r.studentNum) === Number(selectedNum)
+      );
+      if (match) {
+        setNameInput(match.name);
+      }
+    }
+  }, [selectedClass, selectedNum, roster]);
+
   // Extract available numbers for selected class
   const availableNumbers = useMemo(() => {
     if (selectedClass === 0) return [];
