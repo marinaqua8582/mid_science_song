@@ -38,21 +38,6 @@ export const Step2PromptBuilder: React.FC<Props> = ({
   );
 
   const [generatedLyrics, setGeneratedLyrics] = useState<string>(initialData?.generatedLyrics || '');
-
-  // Auto-save on prompt or lyrics change
-  useEffect(() => {
-    if (genre || structurePrompt || situationPrompt || customPrompt || generatedLyrics) {
-      const data: Step2Data = {
-        genre,
-        structurePrompt,
-        situationPrompt,
-        customPrompt,
-        generatedLyrics,
-        generatedAt: new Date().toLocaleString('ko-KR')
-      };
-      onSaveStep2(data, false);
-    }
-  }, [genre, structurePrompt, situationPrompt, customPrompt, generatedLyrics]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorText, setErrorText] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);

@@ -14,19 +14,6 @@ export const Step1ScienceSummary: React.FC<Props> = ({ initialData, onSaveStep1 
   const [keywords, setKeywords] = useState<string[]>(initialData?.keywords || []);
   const [keywordInput, setKeywordInput] = useState<string>('');
 
-  // Auto-save on state change
-  useEffect(() => {
-    if (summaryText.trim() || keywords.length > 0) {
-      const data: Step1Data = {
-        unit: selectedUnit,
-        summary: summaryText,
-        keywords,
-        savedAt: new Date().toLocaleString('ko-KR')
-      };
-      onSaveStep1(data, false);
-    }
-  }, [selectedUnit, summaryText, keywords]);
-
   const currentUnitInfo = SCIENCE_UNITS[selectedUnit];
 
   // Count sentences roughly by checking periods, exclamations, question marks, or line breaks

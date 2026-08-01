@@ -139,8 +139,6 @@ function doPost(e) {
       }
       
       var data = contents.data;
-      // 기존 제출 내역 업데이트 또는 신규 추가
-      var finder = subSheet.getRange('A:A').createTextFinder(data.id).findAll();
       var rowData = [
         data.id, data.grade, data.classNum, data.studentNum, data.name,
         data.step1 ? data.step1.unit : '',
@@ -156,9 +154,27 @@ function doPost(e) {
         data.evaluation ? data.evaluation.feedback : ''
       ];
       
-      if (finder.length > 0) {
-        var row = finder[0].getRow();
-        subSheet.getRange(row, 1, 1, rowData.length).setValues([rowData]);
+      // 검색: ID 또는 학년/반/번호/이름 기준 최신 행 찾기 (동일 학생 행 중복 생성 방지)
+      var allRows = subSheet.getDataRange().getValues();
+      var targetRow = -1;
+      var dataIdClean = String(data.id || '').replace(/^sub-/, '');
+      
+      for (var r = 1; r < allRows.length; r++) {
+        var rowId = String(allRows[r][0] || '').replace(/^sub-/, '');
+        var g = Number(allRows[r][1]);
+        var c = Number(allRows[r][2]);
+        var n = Number(allRows[r][3]);
+        var name = String(allRows[r][4] || '');
+        
+        if ((rowId && rowId === dataIdClean) || 
+            (g === Number(data.grade) && c === Number(data.classNum) && n === Number(data.studentNum) && name === String(data.name))) {
+          targetRow = r + 1;
+          break;
+        }
+      }
+      
+      if (targetRow > 0) {
+        subSheet.getRange(targetRow, 1, 1, rowData.length).setValues([rowData]);
       } else {
         subSheet.appendRow(rowData);
       }

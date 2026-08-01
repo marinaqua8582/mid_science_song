@@ -27,17 +27,6 @@ export const Step4SunoSubmission: React.FC<Props> = ({
   const [copiedPrompt, setCopiedPrompt] = useState<boolean>(false);
   const [copiedLyrics, setCopiedLyrics] = useState<boolean>(false);
 
-  // Auto-save sunoUrl on input change
-  useEffect(() => {
-    if (sunoUrl.trim()) {
-      const data: Step4Data = {
-        sunoUrl: sunoUrl.trim(),
-        finalSubmittedAt: initialData?.finalSubmittedAt || new Date().toLocaleString('ko-KR')
-      };
-      onSubmitFinal(data, false);
-    }
-  }, [sunoUrl]);
-
   const handleCopyPromptStyle = () => {
     const text = `${step2Data.genre}, middle school science song, upbeat, clear vocals, ${step2Data.situationPrompt}`;
     navigator.clipboard.writeText(text);
