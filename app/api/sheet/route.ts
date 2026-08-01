@@ -1,10 +1,29 @@
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    },
+  });
+}
+
 export async function POST(req: Request) {
   try {
     const bodyData = await req.json();
     const gasUrl = bodyData.gasUrl || process.env.NEXT_PUBLIC_GAS_URL || process.env.GAS_URL;
 
     if (!gasUrl) {
-      return Response.json({ error: 'GAS_URL이 설정되지 않았습니다.' }, { status: 400 });
+      return Response.json(
+        { error: 'GAS_URL이 설정되지 않았습니다.' },
+        {
+          status: 400,
+          headers: {
+            'Access-Control-Allow-Origin': '*',
+          },
+        }
+      );
     }
 
     const payload = {
@@ -29,12 +48,21 @@ export async function POST(req: Request) {
       resData = { status: 'success', raw: text };
     }
 
-    return Response.json(resData);
+    return Response.json(resData, {
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
   } catch (error: any) {
     console.error('Sheet API Route Error:', error);
     return Response.json(
       { error: error?.message || '구글 시트 전송 중 오류가 발생했습니다.' },
-      { status: 500 }
+      {
+        status: 500,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+        },
+      }
     );
   }
 }
