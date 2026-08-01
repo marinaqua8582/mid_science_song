@@ -1,0 +1,6 @@
+{
+  "name": "중학교 과학송 수행평가 & 교사 평가 관리",
+  "description": "중학교 과학(소화, 순환, 호흡, 배설) 단원 학습 기반 Gemini AI 과학송 가사 생성, Suno AI 연동 및 교사 평가 관리 시스템",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
