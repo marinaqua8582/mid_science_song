@@ -5,7 +5,8 @@ import {
 } from './types';
 import {
   loadSettings, loadRoster, loadSubmissions, saveSubmissions,
-  updateSingleSubmission, getDefaultSettings, fetchStudentDataFromGAS, fetchRosterFromGAS
+  updateSingleSubmission, getDefaultSettings, fetchStudentDataFromGAS, fetchRosterFromGAS,
+  fetchAllSubmissionsFromGAS
 } from './utils/storage';
 import { PrivacyBanner } from './components/PrivacyBanner';
 import { StudentLogin } from './components/StudentLogin';
@@ -46,13 +47,21 @@ export default function App() {
     setRoster(loadedRoster);
     setSubmissions(loadedSubs);
 
-    // Sync latest roster from Google Sheets (GAS) across devices
+    // Sync the shared roster and all submissions from Google Sheets across devices.
     fetchRosterFromGAS().then((gasRoster) => {
       if (Array.isArray(gasRoster)) {
         setRoster(gasRoster);
       }
     }).catch((err) => {
       console.warn('Initial roster fetch from GAS:', err);
+    });
+
+    fetchAllSubmissionsFromGAS().then((gasSubmissions) => {
+      if (Array.isArray(gasSubmissions)) {
+        setSubmissions(gasSubmissions);
+      }
+    }).catch((err) => {
+      console.warn('Initial submissions fetch from GAS:', err);
     });
   }, []);
 
@@ -105,9 +114,13 @@ export default function App() {
       );
 
       if (gasData) {
-        // Exists in Google Sheets! Restore student submission and update state/localstorage
-        updateSingleSubmission(gasData);
-        const updatedSubs = loadSubmissions();
+        // Cache data loaded from Sheets without sending another write request.
+        const cached = loadSubmissions();
+        const existingIndex = cached.findIndex(item => item.id === gasData.id);
+        const updatedSubs = existingIndex >= 0
+          ? cached.map((item, index) => index === existingIndex ? gasData : item)
+          : [...cached, gasData];
+        saveSubmissions(updatedSubs);
         setSubmissions(updatedSubs);
 
         // Calculate step based on restored data
@@ -262,7 +275,7 @@ export default function App() {
             {settings.gasUrl && (
               <span className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold rounded-md">
                 <Database className="w-3.5 h-3.5 text-emerald-600" />
-                Google 시트 연동중
+                Google 시트 연결 설정됨
               </span>
             )}
 

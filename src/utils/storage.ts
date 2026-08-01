@@ -113,6 +113,106 @@ export function saveSubmissions(submissions: StudentSubmission[]): void {
   }
 }
 
+export function parseGasSubmissionRows(rows: any[]): StudentSubmission[] {
+  if (!Array.isArray(rows)) return [];
+
+  if (rows.length === 0) return [];
+  if (typeof rows[0] === 'object' && rows[0] !== null && !Array.isArray(rows[0])) {
+    return rows
+      .filter(item => item && item.classNum && item.studentNum && String(item.name || '').trim())
+      .map(item => parseGasDataToSubmission(item));
+  }
+
+  const firstRow = Array.isArray(rows[0]) ? rows[0].map(value => String(value || '').trim()) : [];
+  const hasCanonicalHeader = firstRow.includes('ID') && firstRow.includes('이름');
+  const hasLegacyHeader = firstRow.includes('최종수정시각') && firstRow.includes('이름');
+  const startIndex = hasCanonicalHeader || hasLegacyHeader ? 1 : 0;
+  const submissions: StudentSubmission[] = [];
+
+  for (let index = startIndex; index < rows.length; index++) {
+    const row = rows[index];
+    if (!Array.isArray(row)) continue;
+
+    const isCanonical = hasCanonicalHeader || (!hasLegacyHeader && row.length >= 19 && /^sub-/.test(String(row[0] || '')));
+    const raw = isCanonical
+      ? {
+          id: row[0], grade: row[1], classNum: row[2], studentNum: row[3], name: row[4],
+          domain: row[5], learningContent: row[6], keywords: row[7], musicStyle: row[8],
+          promptStructure: row[9], promptSituation: row[10], promptCustom: row[11],
+          aiLyrics: row[12], editedLyrics: row[13], sunoLink: row[14], status: row[15],
+          submittedAt: row[16], score: row[17], feedback: row[18], evaluationJson: row[19]
+        }
+      : {
+          submittedAt: row[0], grade: 2, classNum: row[1], studentNum: row[2], name: row[3],
+          domain: row[4], learningContent: row[5], keywords: row[6], musicStyle: row[7],
+          promptStructure: row[8], promptSituation: row[9], promptCustom: row[10],
+          aiLyrics: row[11], editedLyrics: row[12], sunoLink: row[13], status: row[14],
+          score: row[15], feedback: row[16], evaluationJson: row[17]
+        };
+
+    if (!raw.classNum || !raw.studentNum || !String(raw.name || '').trim()) continue;
+    submissions.push(parseGasDataToSubmission(raw));
+  }
+
+  const unique = new Map<string, StudentSubmission>();
+  submissions.forEach(submission => unique.set(submission.id, submission));
+  return Array.from(unique.values());
+}
+
+export async function fetchAllSubmissionsFromGAS(): Promise<StudentSubmission[]> {
+  const gasUrl = getGasUrl();
+
+  const processResponse = (responseData: any): StudentSubmission[] | null => {
+    if (!responseData || responseData.status === 'error') return null;
+    const rows = Array.isArray(responseData)
+      ? responseData
+      : Array.isArray(responseData.data)
+        ? responseData.data
+        : Array.isArray(responseData.submissions)
+          ? responseData.submissions
+          : null;
+    if (!rows) return null;
+    const parsed = parseGasSubmissionRows(rows);
+    const merged = new Map<string, StudentSubmission>();
+    loadSubmissions().forEach(item => merged.set(item.id, item));
+    parsed.forEach(item => merged.set(item.id, item));
+    const result = Array.from(merged.values());
+    saveSubmissions(result);
+    return result;
+  };
+
+  try {
+    const apiResponse = await fetch('/api/sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'getSubmissions', gasUrl }),
+    });
+    if (apiResponse.ok) {
+      const parsed = processResponse(await apiResponse.json().catch(() => null));
+      if (parsed) return parsed;
+    }
+  } catch (error) {
+    console.warn('Backend proxy fetch submissions error:', error);
+  }
+
+  // 조회 폴백도 GET만 사용합니다. 조회 때문에 빈 제출 행이 생기는 것을 방지합니다.
+  if (gasUrl && gasUrl.startsWith('http')) {
+    for (const action of ['getSubmissions', 'getData']) {
+      try {
+        const url = `${gasUrl}${gasUrl.includes('?') ? '&' : '?'}action=${action}`;
+        const response = await fetch(url);
+        if (!response.ok) continue;
+        const parsed = processResponse(await response.json().catch(() => null));
+        if (parsed) return parsed;
+      } catch (error) {
+        console.warn(`Direct GET ${action} error:`, error);
+      }
+    }
+  }
+
+  return loadSubmissions();
+}
+
 export async function syncRosterToGAS(roster: StudentRosterItem[], gasUrlParam?: string): Promise<boolean> {
   const targetGasUrl = gasUrlParam || getGasUrl();
   const payload = {
@@ -341,24 +441,6 @@ export async function fetchRosterFromGAS(): Promise<StudentRosterItem[]> {
     }
   }
 
-  // 3. Direct POST request to gasUrl
-  if (gasUrl && gasUrl.startsWith('http')) {
-    try {
-      const directPostRes = await fetch(gasUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload)
-      });
-      if (directPostRes.ok) {
-        const resData = await directPostRes.json().catch(() => null);
-        const roster = processResponse(resData);
-        if (roster) return roster;
-      }
-    } catch (e) {
-      console.warn('Direct POST fetchRosterFromGAS error:', e);
-    }
-  }
-
   return loadRoster();
 }
 
@@ -382,6 +464,9 @@ export interface FormSubmissionPayload {
   sunoLink: string;
   status: string;
   submittedAt: string;
+  score: number | '';
+  feedback: string;
+  evaluation: StudentSubmission['evaluation'];
 }
 
 export function buildSubmissionPayload(submission: StudentSubmission, gasUrl?: string): FormSubmissionPayload {
@@ -416,6 +501,9 @@ export function buildSubmissionPayload(submission: StudentSubmission, gasUrl?: s
     sunoLink: step4?.sunoUrl || '',
     status: submission.status,
     submittedAt: submittedAtStr,
+    score: submission.evaluation?.totalScore ?? '',
+    feedback: submission.evaluation?.feedback || '',
+    evaluation: submission.evaluation,
   };
 }
 
@@ -440,7 +528,27 @@ export function parseGasDataToSubmission(data: any): StudentSubmission {
     status = 'step1';
   }
 
-  const subId = data.id || `sub-${data.grade}-${data.classNum}-${data.studentNum}`;
+  const studentNum = Number(data.studentNum);
+  const formattedStudentNum = studentNum < 10 ? `0${studentNum}` : `${studentNum}`;
+  const subId = data.id || `sub-${Number(data.grade) || 2}-${Number(data.classNum)}-${formattedStudentNum}`;
+
+  let evaluation = data.evaluation || null;
+  if (!evaluation && data.evaluationJson) {
+    try {
+      evaluation = JSON.parse(String(data.evaluationJson));
+    } catch {
+      evaluation = null;
+    }
+  }
+  if (!evaluation && (data.score !== '' && data.score !== undefined || data.feedback)) {
+    evaluation = {
+      totalScore: Number(data.score) || 0,
+      maxScore: 100,
+      scores: {},
+      feedback: data.feedback || '',
+      evaluatedAt: data.submittedAt || new Date().toLocaleString('ko-KR')
+    };
+  }
 
   return {
     id: subId,
@@ -473,13 +581,7 @@ export function parseGasDataToSubmission(data: any): StudentSubmission {
       finalSubmittedAt: data.submittedAt || new Date().toLocaleString('ko-KR')
     } : null,
     updatedAt: data.submittedAt || new Date().toLocaleString('ko-KR'),
-    evaluation: (data.score || data.feedback) ? {
-      totalScore: Number(data.score) || 0,
-      maxScore: 100,
-      scores: {},
-      feedback: data.feedback || '',
-      evaluatedAt: new Date().toLocaleString('ko-KR')
-    } : null
+    evaluation
   };
 }
 
@@ -516,15 +618,19 @@ export async function fetchStudentDataFromGAS(
     console.warn('Backend proxy fetch student error:', e);
   }
 
-  // 2. Direct fetch to GAS URL if needed
+  // 2. Direct GET fetch to GAS URL if needed. Read operations never use POST.
   const gasUrl = getGasUrl();
   if (gasUrl && gasUrl.startsWith('http')) {
     try {
-      const res = await fetch(gasUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload)
+      const params = new URLSearchParams({
+        action: 'getStudentData',
+        grade: String(grade),
+        classNum: String(classNum),
+        studentNum: String(studentNum),
+        name,
+        id: payload.id,
       });
+      const res = await fetch(`${gasUrl}${gasUrl.includes('?') ? '&' : '?'}${params.toString()}`);
       if (res.ok) {
         const data = await res.json().catch(() => null);
         if (data && data.status === 'success' && data.found && data.data) {

@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { StudentSubmission, StudentRosterItem, AppSettings, RubricCriterion } from '../types';
-import { saveRoster, saveSettings, updateSingleSubmission, syncRosterToGAS, fetchRosterFromGAS, getGasUrl } from '../utils/storage';
+import {
+  saveRoster, saveSettings, saveSubmissions, updateSingleSubmission, syncRosterToGAS,
+  fetchRosterFromGAS, fetchAllSubmissionsFromGAS, getGasUrl
+} from '../utils/storage';
+import { GAS_SCRIPT } from '../data/gasScript';
 import { PrintableReport } from './PrintableReport';
 import { diffLyrics } from '../utils/diff';
 import * as XLSX from 'xlsx';
@@ -67,10 +71,26 @@ export const TeacherDashboard: React.FC<Props> = ({
   const [singleNum, setSingleNum] = useState<number>(1);
   const [singleName, setSingleName] = useState<string>('');
   const [isSyncingRoster, setIsSyncingRoster] = useState<boolean>(false);
+  const [isSyncingSubmissions, setIsSyncingSubmissions] = useState<boolean>(false);
 
   // Copy indicator for GAS code
   const [copiedGas, setCopiedGas] = useState<boolean>(false);
   const [gasUrlInput, setGasUrlInput] = useState<string>(settings.gasUrl || '');
+
+  const refreshSubmissions = async (showAlert = false) => {
+    setIsSyncingSubmissions(true);
+    try {
+      const fetched = await fetchAllSubmissionsFromGAS();
+      saveSubmissions(fetched);
+      onUpdateSubmissions(fetched);
+      if (showAlert) alert(`구글 시트에서 제출 자료 ${fetched.length}건을 불러왔습니다.`);
+    } catch (error) {
+      console.error('Submission refresh error:', error);
+      if (showAlert) alert('구글 시트에서 제출 자료를 불러오지 못했습니다. Apps Script 배포 상태를 확인해주세요.');
+    } finally {
+      setIsSyncingSubmissions(false);
+    }
+  };
 
   // Handle Rubric Editing
   const handleAddRubric = () => {
@@ -121,6 +141,7 @@ export const TeacherDashboard: React.FC<Props> = ({
     if (pinInput === settings.teacherPin) {
       setIsAuthenticated(true);
       setPinError('');
+      void refreshSubmissions();
     } else {
       setPinError('비밀번호가 일치하지 않습니다.');
     }
@@ -367,7 +388,7 @@ export const TeacherDashboard: React.FC<Props> = ({
   // Copy GAS Code
   const handleCopyGasCode = async () => {
     try {
-      let text = '';
+      let text = GAS_SCRIPT;
       try {
         const res = await fetch('/api/gas-code');
         if (res.ok) {
@@ -698,7 +719,7 @@ function doPost(e) {
               <span>구글 시트 실시간 연동</span>
             </div>
             {settings.gasUrl ? (
-              <span className="w-2 h-2 rounded-full bg-emerald-500" title="연동 완료" />
+              <span className="w-2 h-2 rounded-full bg-emerald-500" title="연동 URL 설정됨" />
             ) : (
               <span className="w-2 h-2 rounded-full bg-slate-300" title="미연동" />
             )}
@@ -816,15 +837,26 @@ function doPost(e) {
               </select>
             </div>
 
-            <div className="relative w-full sm:w-64">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              <input
-                type="text"
-                placeholder="학생 이름 검색..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:outline-none focus:bg-white"
-              />
+            <div className="flex w-full sm:w-auto gap-2 items-center">
+              <button
+                type="button"
+                onClick={() => void refreshSubmissions(true)}
+                disabled={isSyncingSubmissions}
+                className="px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold flex items-center gap-1.5 disabled:opacity-60"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingSubmissions ? 'animate-spin' : ''}`} />
+                제출 자료 새로고침
+              </button>
+              <div className="relative w-full sm:w-64">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="학생 이름 검색..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:outline-none focus:bg-white"
+                />
+              </div>
             </div>
           </div>
 
@@ -1212,7 +1244,7 @@ function doPost(e) {
               {getGasUrl()}
             </div>
             <p className="text-[11px] text-slate-500 leading-relaxed">
-              * 기기 이동이나 브라우저 변경 시에도 데이터가 유실되지 않도록 LocalStorage 관리를 중단하고 백엔드 고정 환경변수를 사용합니다.
+              * Google Sheets를 공용 원본으로 사용하고 LocalStorage는 일시적인 브라우저 캐시로만 활용합니다.
             </p>
           </div>
 
@@ -1232,7 +1264,7 @@ function doPost(e) {
             </div>
             <p className="text-xs text-indigo-900 leading-relaxed">
               1) 사용 중인 Google Sheets 문서에서 [확장 프로그램] &gt; [Apps Script]를 클릭합니다.<br />
-              2) 위 버튼으로 복사한 코드를 기주 편집기에 붙여넣고 저장합니다.<br />
+              2) 위 버튼으로 복사한 코드를 기존 편집기에 붙여넣고 저장합니다.<br />
               3) [배포] &gt; [새 배포] &gt; 유형: [웹 앱] 선택 후 <strong>'액세스 권한: 모든 사용자(Anyone)'</strong>로 설정하여 배포를 완료하세요.
             </p>
           </div>
