@@ -125,8 +125,11 @@ function doGet(e) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet();
   
   if (action === 'getRoster') {
-    var rosterSheet = sheet.getSheetByName('Roster') || sheet.insertSheet('Roster');
-    var data = rosterSheet.getDataRange().getValues();
+    var rosterSheet = sheet.getSheetByName('Roster') || 
+                      sheet.getSheetByName('명단') || 
+                      sheet.getSheetByName('학생명단') || 
+                      sheet.getSheets()[0];
+    var data = rosterSheet ? rosterSheet.getDataRange().getValues() : [];
     return ContentService.createTextOutput(JSON.stringify({ status: 'success', data: data }))
       .setMimeType(ContentService.MimeType.JSON);
   }
@@ -305,16 +308,40 @@ function doPost(e) {
   // Sheet API handler for /api/sheet and /api/sync-gas
   const handleSheetSync = async (req: express.Request, res: express.Response) => {
     try {
-      const bodyData = req.body || {};
+      const bodyData = (req.method === 'GET' ? req.query : req.body) || {};
       const gasUrl = process.env.NEXT_PUBLIC_GAS_URL || process.env.GAS_URL || process.env.VITE_GAS_URL || bodyData.gasUrl || DEFAULT_GAS_URL;
 
       if (!gasUrl) {
         return res.status(400).json({ error: "GAS_URL이 제공되지 않았습니다." });
       }
 
+      const action = bodyData.action || "saveSubmission";
+
+      // For getRoster, perform GET request to gasUrl first
+      if (action === "getRoster") {
+        try {
+          const getUrl = `${gasUrl}${gasUrl.includes("?") ? "&" : "?"}action=getRoster`;
+          const getResponse = await fetch(getUrl, { method: "GET" });
+          if (getResponse.ok) {
+            const text = await getResponse.text();
+            let resData;
+            try {
+              resData = JSON.parse(text);
+            } catch {
+              resData = { status: "success", raw: text };
+            }
+            if (resData && (resData.status === "success" || Array.isArray(resData.data) || Array.isArray(resData))) {
+              return res.json(resData);
+            }
+          }
+        } catch (getErr) {
+          console.warn("GAS getRoster GET fallback attempt:", getErr);
+        }
+      }
+
       // Format full JSON payload preserving all form keys
       const payload = {
-        action: bodyData.action || "saveSubmission",
+        action: action,
         ...bodyData,
         data: bodyData,
       };
@@ -344,6 +371,8 @@ function doPost(e) {
     }
   };
 
+  app.get("/api/sheet", handleSheetSync);
+  app.get("/api/sync-gas", handleSheetSync);
   app.post("/api/sheet", handleSheetSync);
   app.post("/api/sync-gas", handleSheetSync);
 
