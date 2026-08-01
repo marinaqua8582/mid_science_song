@@ -318,7 +318,50 @@ export function updateSingleSubmission(submission: StudentSubmission): void {
 export async function syncSubmissionToGAS(gasUrl: string, submission: StudentSubmission): Promise<boolean> {
   const bodyData = buildSubmissionPayload(submission, gasUrl);
 
-  // 1. Send full JSON object to backend API endpoint (/api/sheet) with application/json header
+  const targetGasUrl = gasUrl || (typeof window !== 'undefined' && (window as any).GAS_URL) || '';
+
+  // 1. Direct fetch to Google Apps Script URL using text/plain (avoids browser CORS OPTIONS preflight block)
+  if (targetGasUrl && targetGasUrl.startsWith('http')) {
+    const payload = {
+      action: 'saveSubmission',
+      data: bodyData,
+      ...bodyData,
+    };
+
+    try {
+      const response = await fetch(targetGasUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        const resData = await response.json().catch(() => null);
+        if (resData && resData.status === 'success') return true;
+      }
+    } catch (e) {
+      // Direct fetch restricted by browser CORS security policy, proceed to fallback
+    }
+
+    // Fallback: mode 'no-cors' to guarantee submission delivery to Google Apps Script
+    try {
+      await fetch(targetGasUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: JSON.stringify(payload),
+      });
+      return true;
+    } catch (err) {
+      console.warn('Direct GAS sync warning:', err);
+    }
+  }
+
+  // 2. Try backend proxy API (/api/sheet) if available
   try {
     const apiRes = await fetch('/api/sheet', {
       method: 'POST',
@@ -333,49 +376,10 @@ export async function syncSubmissionToGAS(gasUrl: string, submission: StudentSub
       if (data && data.status === 'success') return true;
     }
   } catch (e) {
-    // API route fallback
+    // API proxy not present on static deployment
   }
 
-  if (!gasUrl || !gasUrl.startsWith('http')) return false;
-
-  const payload = {
-    action: 'saveSubmission',
-    data: bodyData,
-    ...bodyData,
-  };
-
-  // 2. Direct fetch fallback to GAS URL using text/plain (avoids CORS OPTIONS preflight check)
-  try {
-    const response = await fetch(gasUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'text/plain;charset=utf-8',
-      },
-      body: JSON.stringify(payload)
-    });
-    if (response.ok) {
-      const resData = await response.json().catch(() => null);
-      if (resData && resData.status === 'success') return true;
-    }
-  } catch (e) {
-    // Direct CORS fallback
-  }
-
-  // 3. Fallback using mode: 'no-cors'
-  try {
-    await fetch(gasUrl, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: {
-        'Content-Type': 'text/plain;charset=utf-8',
-      },
-      body: JSON.stringify(payload)
-    });
-    return true;
-  } catch (err) {
-    console.warn('GAS sync warning:', err);
-    return false;
-  }
+  return false;
 }
 
 export async function syncRosterToGAS(gasUrl: string, roster: StudentRosterItem[]): Promise<boolean> {
