@@ -48,13 +48,27 @@ export default function App() {
 
     // Sync latest roster from Google Sheets (GAS) across devices
     fetchRosterFromGAS().then((gasRoster) => {
-      if (gasRoster && gasRoster.length > 0) {
+      if (Array.isArray(gasRoster)) {
         setRoster(gasRoster);
       }
     }).catch((err) => {
       console.warn('Initial roster fetch from GAS:', err);
     });
   }, []);
+
+  // Refresh roster from Google Sheets
+  const handleRefreshRoster = async () => {
+    try {
+      const gasRoster = await fetchRosterFromGAS();
+      if (Array.isArray(gasRoster)) {
+        setRoster(gasRoster);
+      }
+      return gasRoster;
+    } catch (err) {
+      console.warn('Refresh roster error:', err);
+      return [];
+    }
+  };
 
   // Current student submission object derived from state
   const currentSubmission = currentStudent
@@ -286,7 +300,12 @@ export default function App() {
           <div className="space-y-6">
             {!currentStudent ? (
               /* Student Login Form */
-              <StudentLogin roster={roster} isLoading={isLoadingStudentData} onLogin={handleStudentLogin} />
+              <StudentLogin
+                roster={roster}
+                isLoading={isLoadingStudentData}
+                onLogin={handleStudentLogin}
+                onRefreshRoster={handleRefreshRoster}
+              />
             ) : layoutMode === 'sidebar' ? (
               /* --- SIDEBAR FRAME LAYOUT (Modern Dashboard Shell) --- */
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
