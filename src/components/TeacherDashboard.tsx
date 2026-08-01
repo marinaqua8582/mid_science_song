@@ -189,7 +189,10 @@ export const TeacherDashboard: React.FC<Props> = ({
     updateSingleSubmission(updated);
 
     // Update parent state
-    const newSubs = submissions.map(s => s.id === updated.id ? updated : s);
+    const exists = submissions.some(s => s.id === updated.id);
+    const newSubs = exists 
+      ? submissions.map(s => s.id === updated.id ? updated : s)
+      : [...submissions, updated];
     onUpdateSubmissions(newSubs);
     setSelectedStudentSub(updated);
     alert('평가 점수 및 피드백이 성공적으로 저장되었습니다!');
@@ -281,6 +284,34 @@ export const TeacherDashboard: React.FC<Props> = ({
     alert('Google Sheets / GAS 설정이 저장되었습니다.');
   };
 
+  // Combine roster and submissions so every student in roster has a StudentSubmission record
+  const mergedSubmissions: StudentSubmission[] = React.useMemo(() => {
+    const allRosterSubmissions: StudentSubmission[] = roster.map(student => {
+      const found = submissions.find(
+        s => s.id === `sub-${student.id}` || (s.classNum === student.classNum && s.studentNum === student.studentNum && s.name === student.name)
+      );
+      if (found) return found;
+      return {
+        id: `sub-${student.id}`,
+        grade: student.grade,
+        classNum: student.classNum,
+        studentNum: student.studentNum,
+        name: student.name,
+        status: 'not_started',
+        step1: null,
+        step2: null,
+        step3: null,
+        step4: null,
+        updatedAt: '',
+        evaluation: null
+      };
+    });
+
+    const rosterKeys = new Set(allRosterSubmissions.map(s => s.id));
+    const extraSubmissions = submissions.filter(s => !rosterKeys.has(s.id));
+    return [...allRosterSubmissions, ...extraSubmissions];
+  }, [roster, submissions]);
+
   // Helper to determine status key
   const getStatusKey = (sub: StudentSubmission): 'completed' | 'step3' | 'step2' | 'step1' | 'not_started' => {
     if (sub.status === 'completed' || sub.step4?.finalSubmittedAt) return 'completed';
@@ -291,10 +322,17 @@ export const TeacherDashboard: React.FC<Props> = ({
   };
 
   // Filter Submissions
-  const filteredSubmissions = submissions.filter(sub => {
+  const filteredSubmissions = mergedSubmissions.filter(sub => {
     if (classFilter !== 'all' && sub.classNum !== Number(classFilter)) return false;
     if (unitFilter !== 'all' && sub.step1?.unit !== unitFilter) return false;
-    if (statusFilter !== 'all' && getStatusKey(sub) !== statusFilter) return false;
+    if (statusFilter !== 'all') {
+      const key = getStatusKey(sub);
+      if (statusFilter === 'in_progress') {
+        if (!['step1', 'step2', 'step3'].includes(key)) return false;
+      } else if (key !== statusFilter) {
+        return false;
+      }
+    }
     if (searchQuery.trim() && !sub.name.includes(searchQuery.trim())) return false;
     return true;
   });
@@ -482,27 +520,33 @@ export const TeacherDashboard: React.FC<Props> = ({
         {activeTab === 'status' && (
         <div className="space-y-6">
           {/* Status Metrics Bar */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
               <div className="text-xs text-slate-500 font-medium">전체 등록 학생</div>
-              <div className="text-2xl font-bold text-slate-900 mt-1">{roster.length}명</div>
+              <div className="text-2xl font-bold text-slate-900 mt-1">{mergedSubmissions.length}명</div>
             </div>
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
               <div className="text-xs text-slate-500 font-medium">최종 제출 완료</div>
               <div className="text-2xl font-bold text-emerald-600 mt-1">
-                {submissions.filter(s => s.status === 'completed').length}명
+                {mergedSubmissions.filter(s => getStatusKey(s) === 'completed').length}명
               </div>
             </div>
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <div className="text-xs text-slate-500 font-medium">1단계 진행 중</div>
+              <div className="text-xs text-slate-500 font-medium">진행 중</div>
               <div className="text-2xl font-bold text-amber-600 mt-1">
-                {submissions.filter(s => s.status === 'step1_saved').length}명
+                {mergedSubmissions.filter(s => ['step1', 'step2', 'step3'].includes(getStatusKey(s))).length}명
+              </div>
+            </div>
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+              <div className="text-xs text-slate-500 font-medium">미작성</div>
+              <div className="text-2xl font-bold text-slate-400 mt-1">
+                {mergedSubmissions.filter(s => getStatusKey(s) === 'not_started').length}명
               </div>
             </div>
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
               <div className="text-xs text-slate-500 font-medium">채점 완료 학생</div>
               <div className="text-2xl font-bold text-indigo-600 mt-1">
-                {submissions.filter(s => s.evaluation !== null).length}명
+                {mergedSubmissions.filter(s => s.evaluation !== null).length}명
               </div>
             </div>
           </div>
@@ -540,9 +584,7 @@ export const TeacherDashboard: React.FC<Props> = ({
               >
                 <option value="all">전체 상태</option>
                 <option value="completed">최종 완료</option>
-                <option value="step1">1단계 완료</option>
-                <option value="step2">2단계 완료</option>
-                <option value="step3">3단계 완료</option>
+                <option value="in_progress">진행 중</option>
                 <option value="not_started">미작성</option>
               </select>
             </div>
