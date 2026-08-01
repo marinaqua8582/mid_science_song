@@ -5,6 +5,14 @@ const SETTINGS_KEY = 'science_song_app_settings';
 const ROSTER_KEY = 'science_song_roster';
 const SUBMISSIONS_KEY = 'science_song_submissions';
 
+function canonicalRosterId(item: Partial<StudentRosterItem>): string {
+  const grade = Number(item.grade) || 2;
+  const classNum = Number(item.classNum) || 0;
+  const studentNum = Number(item.studentNum) || 0;
+  const formattedNum = studentNum < 10 ? `0${studentNum}` : `${studentNum}`;
+  return `${grade}-${classNum}-${formattedNum}`;
+}
+
 export function getGasUrl(): string {
   const metaEnv = (import.meta as any).env || {};
   const envUrl = metaEnv.NEXT_PUBLIC_GAS_URL ||
@@ -61,8 +69,8 @@ export function loadRoster(): StudentRosterItem[] {
     const unique: StudentRosterItem[] = [];
     for (const item of parsed) {
       if (!item) continue;
-      const formattedNum = item.studentNum < 10 ? `0${item.studentNum}` : `${item.studentNum}`;
-      const key = item.id || `${item.grade}-${item.classNum}-${formattedNum}`;
+      // 시트의 ID가 실수로 중복되어도 서로 다른 학년·반·번호 학생을 누락시키지 않습니다.
+      const key = canonicalRosterId(item);
       if (!seen.has(key)) {
         seen.add(key);
         unique.push({ ...item, id: key });
@@ -172,13 +180,11 @@ export async function fetchAllSubmissionsFromGAS(): Promise<StudentSubmission[]>
           ? responseData.submissions
           : null;
     if (!rows) return null;
+    // 원격 조회가 성공한 경우 Google Sheets 결과만을 공용 원본으로 사용합니다.
+    // 기기별 localStorage를 섞으면 한 기기에만 있는 자료가 원격 자료처럼 보일 수 있습니다.
     const parsed = parseGasSubmissionRows(rows);
-    const merged = new Map<string, StudentSubmission>();
-    loadSubmissions().forEach(item => merged.set(item.id, item));
-    parsed.forEach(item => merged.set(item.id, item));
-    const result = Array.from(merged.values());
-    saveSubmissions(result);
-    return result;
+    saveSubmissions(parsed);
+    return parsed;
   };
 
   try {
@@ -282,8 +288,7 @@ export function parseGasRosterRows(rows: any[]): StudentRosterItem[] {
         const grade = Number(item.grade || item.학년) || 2;
         const classNum = Number(item.classNum || item.class || item.반) || 1;
         const studentNum = Number(item.studentNum || item.number || item.num || item.번호) || 1;
-        const formattedNum = studentNum < 10 ? `0${studentNum}` : `${studentNum}`;
-        const id = String(item.id || `${grade}-${classNum}-${formattedNum}`);
+        const id = canonicalRosterId({ grade, classNum, studentNum });
         roster.push({ id, grade, classNum, studentNum, name });
       }
     }
@@ -363,9 +368,10 @@ export function parseGasRosterRows(rows: any[]): StudentRosterItem[] {
     }
 
     if (name && name !== '이름' && name !== '성명' && !name.toLowerCase().includes('id') && classNum > 0 && studentNum > 0) {
-      const formattedNum = studentNum < 10 ? `0${studentNum}` : `${studentNum}`;
+      const canonicalId = canonicalRosterId({ grade, classNum, studentNum });
       roster.push({
-        id: id || `${grade}-${classNum}-${formattedNum}`,
+        // ID 열의 오타·중복보다 실제 학년·반·번호를 우선합니다.
+        id: canonicalId,
         grade,
         classNum,
         studentNum,
@@ -377,8 +383,7 @@ export function parseGasRosterRows(rows: any[]): StudentRosterItem[] {
   const seenKeys = new Set<string>();
   const uniqueRoster: StudentRosterItem[] = [];
   for (const item of roster) {
-    const formattedNum = item.studentNum < 10 ? `0${item.studentNum}` : `${item.studentNum}`;
-    const key = item.id || `${item.grade}-${item.classNum}-${formattedNum}`;
+    const key = canonicalRosterId(item);
     if (!seenKeys.has(key)) {
       seenKeys.add(key);
       uniqueRoster.push({ ...item, id: key });
