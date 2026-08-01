@@ -169,7 +169,7 @@ export const Step2PromptBuilder: React.FC<Props> = ({
           {/* Builder 1: Structure */}
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-slate-700 flex items-center justify-between">
-              <span>① 가사 구조 설계 (Verse, Chorus 구성을 자유롭게 입력)</span>
+              <span>① 가사 구조 설계 ([Verse 1] - [Chorus] - [Verse 2] - [Chorus] - [Outro])</span>
             </label>
             <input
               type="text"

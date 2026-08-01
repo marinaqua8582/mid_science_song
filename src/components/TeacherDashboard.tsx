@@ -31,8 +31,15 @@ export const TeacherDashboard: React.FC<Props> = ({
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [pinError, setPinError] = useState<string>('');
 
-  // Active Tab: 'status' | 'roster' | 'rubrics' | 'gas'
-  const [activeTab, setActiveTab] = useState<'status' | 'roster' | 'rubrics' | 'gas'>('status');
+  // Password Change state
+  const [currentPinInput, setCurrentPinInput] = useState<string>('');
+  const [newPinInput, setNewPinInput] = useState<string>('');
+  const [confirmPinInput, setConfirmPinInput] = useState<string>('');
+  const [pinChangeError, setPinChangeError] = useState<string>('');
+  const [pinChangeMsg, setPinChangeMsg] = useState<string>('');
+
+  // Active Tab: 'status' | 'roster' | 'rubrics' | 'gas' | 'password'
+  const [activeTab, setActiveTab] = useState<'status' | 'roster' | 'rubrics' | 'gas' | 'password'>('status');
 
   // Filters for Status view
   const [classFilter, setClassFilter] = useState<string>('all');
@@ -60,6 +67,39 @@ export const TeacherDashboard: React.FC<Props> = ({
     } else {
       setPinError('비밀번호가 일치하지 않습니다.');
     }
+  };
+
+  // Handle PIN Change
+  const handleChangePin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPinChangeError('');
+    setPinChangeMsg('');
+
+    if (currentPinInput !== settings.teacherPin) {
+      setPinChangeError('현재 비밀번호가 일치하지 않습니다.');
+      return;
+    }
+    if (!newPinInput.trim()) {
+      setPinChangeError('새 비밀번호를 입력해주세요.');
+      return;
+    }
+    if (newPinInput !== confirmPinInput) {
+      setPinChangeError('새 비밀번호와 확인 입력이 일치하지 않습니다.');
+      return;
+    }
+
+    const updatedSettings = {
+      ...settings,
+      teacherPin: newPinInput.trim()
+    };
+
+    saveSettings(updatedSettings);
+    onUpdateSettings(updatedSettings);
+
+    setCurrentPinInput('');
+    setNewPinInput('');
+    setConfirmPinInput('');
+    setPinChangeMsg('비밀번호가 성공적으로 변경되었습니다!');
   };
 
   // Open Student Modal for Grading / Viewing
@@ -210,7 +250,7 @@ export const TeacherDashboard: React.FC<Props> = ({
         <div>
           <h2 className="text-2xl font-bold text-slate-800">교사 인증 (PIN 입력)</h2>
           <p className="text-sm text-slate-500 mt-1">
-            교사 전용 평가 관리 대시보드 접근을 위해 비밀번호를 입력하세요. (초기 비밀번호: 1234)
+            교사 전용 평가 관리 대시보드 접근을 위해 비밀번호를 입력하세요.
           </p>
         </div>
 
@@ -219,7 +259,7 @@ export const TeacherDashboard: React.FC<Props> = ({
             <KeyRound className="w-5 h-5 text-slate-400 absolute left-3.5 top-3.5" />
             <input
               type="password"
-              placeholder="비밀번호 4자리 입력"
+              placeholder=""
               value={pinInput}
               onChange={(e) => setPinInput(e.target.value)}
               className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-300 rounded-xl font-mono text-center text-lg tracking-widest focus:ring-2 focus:ring-slate-800 focus:outline-none"
@@ -242,60 +282,145 @@ export const TeacherDashboard: React.FC<Props> = ({
   }
 
   return (
-    <div className="space-y-6">
-      {/* Teacher Header Bar */}
-      <div className="bg-slate-900 text-white rounded-xl p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 border border-slate-800">
-        <div>
-          <div className="flex items-center gap-2">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      {/* Left Teacher Navigation Sidebar */}
+      <aside className="lg:col-span-4 xl:col-span-3 space-y-4 lg:sticky lg:top-20">
+        {/* Admin Header Info Card */}
+        <div className="bg-slate-900 text-white rounded-xl p-5 shadow-sm border border-slate-800 space-y-2">
+          <div className="flex items-center justify-between">
             <span className="px-2.5 py-0.5 bg-blue-600 text-white text-[10px] font-bold rounded uppercase tracking-wider">
               관리자 모드
             </span>
-            <h2 className="text-xl font-bold tracking-tight">과학송 수행평가 교사 대시보드</h2>
+            <span className="text-[10px] text-slate-400 font-medium">교사 전용</span>
           </div>
-          <p className="text-xs text-slate-400 mt-1">
-            학생 명단 업로드, 제출 결과 조회, A4 종이 인쇄 및 구글 시트 평가 채점 관리
+          <h2 className="text-base font-bold tracking-tight text-white">과학송 평가 대시보드</h2>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            학생 명단 관리, 제출물 채점 및 A4 보고서 출력, 구글 시트 평가 연동
           </p>
         </div>
 
-        {/* Tab Selector Buttons */}
-        <div className="flex flex-wrap gap-1 bg-slate-800 p-1.5 rounded-lg text-xs font-semibold border border-slate-700/60">
+        {/* Sidebar Navigation Menu */}
+        <div className="bg-white rounded-xl p-2.5 border border-slate-200 shadow-xs space-y-1">
+          <div className="px-2.5 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+            메뉴 및 평가 관리
+          </div>
+
+          {/* Tab 1: Submission Status */}
           <button
             onClick={() => setActiveTab('status')}
-            className={`px-3 py-2 rounded transition-all flex items-center gap-1.5 ${
-              activeTab === 'status' ? 'bg-blue-600 text-white shadow-sm font-medium' : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            className={`w-full p-3 rounded-lg text-left transition-all flex items-center justify-between gap-2 text-xs font-semibold border ${
+              activeTab === 'status'
+                ? 'bg-blue-600 text-white border-blue-600 shadow-sm font-bold'
+                : 'bg-white text-slate-700 border-transparent hover:bg-slate-100'
             }`}
           >
-            <FileCheck className="w-4 h-4" /> 제출 현황 ({submissions.length})
+            <div className="flex items-center gap-2.5">
+              <FileCheck className="w-4 h-4" />
+              <span>제출 현황 및 채점</span>
+            </div>
+            <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full ${
+              activeTab === 'status' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
+            }`}>
+              {submissions.length}명
+            </span>
           </button>
+
+          {/* Tab 2: Roster */}
           <button
             onClick={() => setActiveTab('roster')}
-            className={`px-3 py-2 rounded transition-all flex items-center gap-1.5 ${
-              activeTab === 'roster' ? 'bg-blue-600 text-white shadow-sm font-medium' : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            className={`w-full p-3 rounded-lg text-left transition-all flex items-center justify-between gap-2 text-xs font-semibold border ${
+              activeTab === 'roster'
+                ? 'bg-blue-600 text-white border-blue-600 shadow-sm font-bold'
+                : 'bg-white text-slate-700 border-transparent hover:bg-slate-100'
             }`}
           >
-            <Users className="w-4 h-4" /> 학생 명단 ({roster.length})
+            <div className="flex items-center gap-2.5">
+              <Users className="w-4 h-4" />
+              <span>학생 명단 관리</span>
+            </div>
+            <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full ${
+              activeTab === 'roster' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
+            }`}>
+              {roster.length}명
+            </span>
           </button>
+
+          {/* Tab 3: Rubrics */}
           <button
             onClick={() => setActiveTab('rubrics')}
-            className={`px-3 py-2 rounded transition-all flex items-center gap-1.5 ${
-              activeTab === 'rubrics' ? 'bg-blue-600 text-white shadow-sm font-medium' : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            className={`w-full p-3 rounded-lg text-left transition-all flex items-center justify-between gap-2 text-xs font-semibold border ${
+              activeTab === 'rubrics'
+                ? 'bg-blue-600 text-white border-blue-600 shadow-sm font-bold'
+                : 'bg-white text-slate-700 border-transparent hover:bg-slate-100'
             }`}
           >
-            <Award className="w-4 h-4" /> 평가 기준
+            <div className="flex items-center gap-2.5">
+              <Award className="w-4 h-4" />
+              <span>수행평가 채점 기준표</span>
+            </div>
           </button>
+
+          {/* Tab 4: Google Sheets Integration */}
           <button
             onClick={() => setActiveTab('gas')}
-            className={`px-3 py-2 rounded transition-all flex items-center gap-1.5 ${
-              activeTab === 'gas' ? 'bg-blue-600 text-white shadow-sm font-medium' : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+            className={`w-full p-3 rounded-lg text-left transition-all flex items-center justify-between gap-2 text-xs font-semibold border ${
+              activeTab === 'gas'
+                ? 'bg-blue-600 text-white border-blue-600 shadow-sm font-bold'
+                : 'bg-white text-slate-700 border-transparent hover:bg-slate-100'
             }`}
           >
-            <Link className="w-4 h-4" /> 구글 시트 연동
+            <div className="flex items-center gap-2.5">
+              <Link className="w-4 h-4" />
+              <span>구글 시트 실시간 연동</span>
+            </div>
+            {settings.gasUrl ? (
+              <span className="w-2 h-2 rounded-full bg-emerald-500" title="연동 완료" />
+            ) : (
+              <span className="w-2 h-2 rounded-full bg-slate-300" title="미연동" />
+            )}
+          </button>
+
+          {/* Tab 5: Password Change */}
+          <button
+            onClick={() => setActiveTab('password')}
+            className={`w-full p-3 rounded-lg text-left transition-all flex items-center justify-between gap-2 text-xs font-semibold border ${
+              activeTab === 'password'
+                ? 'bg-blue-600 text-white border-blue-600 shadow-sm font-bold'
+                : 'bg-white text-slate-700 border-transparent hover:bg-slate-100'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <KeyRound className="w-4 h-4" />
+              <span>교사 비밀번호 변경</span>
+            </div>
           </button>
         </div>
-      </div>
 
-      {/* TAB 1: SUBMISSION STATUS & RESULTS */}
-      {activeTab === 'status' && (
+        {/* Quick Summary Widget */}
+        <div className="p-4 bg-slate-900 text-white rounded-xl border border-slate-800 space-y-2 text-xs">
+          <div className="font-bold flex items-center gap-1.5 text-slate-200">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            제출 현황 요약
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-center pt-1">
+            <div className="p-2 bg-slate-800 rounded-lg">
+              <div className="text-[10px] text-slate-400">등록 학생</div>
+              <div className="font-bold text-sm text-slate-100">{roster.length}명</div>
+            </div>
+            <div className="p-2 bg-slate-800 rounded-lg">
+              <div className="text-[10px] text-slate-400">제출 완료</div>
+              <div className="font-bold text-sm text-emerald-400">
+                {submissions.filter(s => s.status === 'completed').length}명
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* Right Main Workspace Canvas */}
+      <main className="lg:col-span-8 xl:col-span-9 space-y-6">
+        {/* TAB 1: SUBMISSION STATUS & RESULTS */}
+        {activeTab === 'status' && (
         <div className="space-y-6">
           {/* Status Metrics Bar */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -615,6 +740,77 @@ export const TeacherDashboard: React.FC<Props> = ({
         </div>
       )}
 
+      {/* TAB 5: TEACHER PASSWORD CHANGE */}
+      {activeTab === 'password' && (
+        <div className="bg-white rounded-2xl shadow-xs border border-slate-200 p-6 md:p-8 space-y-6 max-w-xl">
+          <div className="border-b border-slate-200 pb-4">
+            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <KeyRound className="w-5 h-5 text-indigo-600" />
+              교사 대시보드 비밀번호 변경
+            </h3>
+            <p className="text-xs text-slate-500 mt-1">
+              교사 전용 대시보드 접근용 비밀번호를 새로 설정할 수 있습니다.
+            </p>
+          </div>
+
+          <form onSubmit={handleChangePin} className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">현재 비밀번호</label>
+              <input
+                type="password"
+                value={currentPinInput}
+                onChange={(e) => setCurrentPinInput(e.target.value)}
+                placeholder="현재 비밀번호 입력"
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">새 비밀번호</label>
+              <input
+                type="password"
+                value={newPinInput}
+                onChange={(e) => setNewPinInput(e.target.value)}
+                placeholder="새로 설정할 비밀번호 입력"
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">새 비밀번호 확인</label>
+              <input
+                type="password"
+                value={confirmPinInput}
+                onChange={(e) => setConfirmPinInput(e.target.value)}
+                placeholder="새 비밀번호 다시 입력"
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              />
+            </div>
+
+            {pinChangeError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 font-semibold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                {pinChangeError}
+              </div>
+            )}
+
+            {pinChangeMsg && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 font-semibold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                {pinChangeMsg}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow transition-all text-sm flex items-center justify-center gap-2"
+            >
+              <Save className="w-4 h-4" /> 비밀번호 변경 저장
+            </button>
+          </form>
+        </div>
+      )}
+
       {/* STUDENT DETAIL & SCORING MODAL */}
       {selectedStudentSub && (
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
@@ -765,6 +961,7 @@ export const TeacherDashboard: React.FC<Props> = ({
           </div>
         </div>
       )}
+      </main>
     </div>
   );
 };
