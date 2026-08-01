@@ -28,7 +28,7 @@ export const Step2PromptBuilder: React.FC<Props> = ({
 }) => {
   const [genre, setGenre] = useState<string>(initialData?.genre || 'K-Pop');
   const [structurePrompt, setStructurePrompt] = useState<string>(
-    initialData?.structurePrompt || '[Verse 1] - [Chorus] - [Verse 2] - [Chorus] - [Outro]'
+    initialData?.structurePrompt || '1절은 들숨, 2절은 날숨, 후렴은 내호흡 외호흡 내용'
   );
   const [situationPrompt, setSituationPrompt] = useState<string>(
     initialData?.situationPrompt || '과학 시간에 친구들과 신나게 노래 부르는 무대 상황'
@@ -183,7 +183,7 @@ export const Step2PromptBuilder: React.FC<Props> = ({
               type="text"
               value={structurePrompt}
               onChange={(e) => setStructurePrompt(e.target.value)}
-              placeholder="예: [Verse 1] - [Chorus] - [Verse 2] - [Chorus] - [Outro]"
+              placeholder="예: 1절은 들숨, 2절은 날숨, 후렴은 내호흡 외호흡 내용"
               className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 focus:bg-white focus:outline-none"
             />
           </div>

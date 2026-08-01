@@ -147,7 +147,7 @@ export default function App() {
 
     updateSingleSubmission(updated);
     setSubmissions(loadSubmissions());
-    alert('수행평가가 성공적으로 최종 제출되었습니다!');
+    alert(`수행평가가 성공적으로 제출되었습니다!\n마지막 제출 시간: ${step4Data.finalSubmittedAt}`);
   };
 
   return (
