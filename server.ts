@@ -110,7 +110,7 @@ async function startServer() {
  */
 
 function doGet(e) {
-  var action = e.parameter.action;
+  var action = e.parameter ? e.parameter.action : '';
   var sheet = SpreadsheetApp.getActiveSpreadsheet();
   
   if (action === 'getRoster') {
@@ -129,45 +129,65 @@ function doGet(e) {
 function doPost(e) {
   try {
     var contents = JSON.parse(e.postData.contents);
-    var action = contents.action;
+    var action = contents.action || 'saveSubmission';
     var sheet = SpreadsheetApp.getActiveSpreadsheet();
     
     if (action === 'saveSubmission') {
       var subSheet = sheet.getSheetByName('Submissions') || sheet.insertSheet('Submissions');
       if (subSheet.getLastRow() === 0) {
-        subSheet.appendRow(['ID', '학년', '반', '번호', '이름', '단원', '학습정리', '핵심단어', '장르', 'AI가사', '학생수정가사', 'Suno링크', '상태', '제출일시', '교사평가점수', '피드백']);
+        subSheet.appendRow([
+          'ID', '학년', '반', '번호', '이름', 
+          '단원(domain)', '학습정리(learningContent)', '핵심단어(keywords)', 
+          '음악스타일(musicStyle)', '구조프롬프트(promptStructure)', '상황프롬프트(promptSituation)', '추가프롬프트(promptCustom)',
+          'AI가사(aiLyrics)', '학생수정가사(editedLyrics)', 'Suno링크(sunoLink)', 
+          '상태(status)', '제출시각(submittedAt)', '교사점수', '피드백'
+        ]);
       }
       
-      var data = contents.data;
+      var data = contents.data || contents;
+      
+      var id = data.id || ('sub-' + (data.grade || 2) + '-' + (data.classNum || '') + '-' + (data.studentNum || ''));
+      var grade = data.grade || 2;
+      var classNum = data.classNum !== undefined && data.classNum !== null ? data.classNum : '';
+      var studentNum = data.studentNum !== undefined && data.studentNum !== null ? data.studentNum : '';
+      var name = data.name || '';
+      var domain = data.domain || (data.step1 ? data.step1.unit : '') || '';
+      var learningContent = data.learningContent || (data.step1 ? data.step1.summary : '') || '';
+      var keywords = Array.isArray(data.keywords) ? data.keywords.join(', ') : (data.keywords || (data.step1 && Array.isArray(data.step1.keywords) ? data.step1.keywords.join(', ') : ''));
+      var musicStyle = data.musicStyle || (data.step2 ? data.step2.genre : '') || '';
+      var promptStructure = data.promptStructure || (data.step2 ? data.step2.structurePrompt : '') || '';
+      var promptSituation = data.promptSituation || (data.step2 ? data.step2.situationPrompt : '') || '';
+      var promptCustom = data.promptCustom || (data.step2 ? data.step2.customPrompt : '') || '';
+      var aiLyrics = data.aiLyrics || (data.step2 ? data.step2.generatedLyrics : '') || '';
+      var editedLyrics = data.editedLyrics || (data.step3 ? data.step3.editedLyrics : '') || '';
+      var sunoLink = data.sunoLink || (data.step4 ? data.step4.sunoUrl : '') || '';
+      var status = data.status || 'completed';
+      var submittedAt = data.submittedAt || data.finalSubmittedAt || data.updatedAt || (data.step4 ? data.step4.finalSubmittedAt : '') || new Date().toLocaleString('ko-KR');
+      var score = data.evaluation ? data.evaluation.totalScore : (data.totalScore || '');
+      var feedback = data.evaluation ? data.evaluation.feedback : (data.feedback || '');
+
       var rowData = [
-        data.id, data.grade, data.classNum, data.studentNum, data.name,
-        data.step1 ? data.step1.unit : '',
-        data.step1 ? data.step1.summary : '',
-        data.step1 ? (data.step1.keywords || []).join(', ') : '',
-        data.step2 ? data.step2.genre : '',
-        data.step2 ? data.step2.generatedLyrics : '',
-        data.step3 ? data.step3.editedLyrics : '',
-        data.step4 ? data.step4.sunoUrl : '',
-        data.status,
-        data.updatedAt,
-        data.evaluation ? data.evaluation.totalScore : '',
-        data.evaluation ? data.evaluation.feedback : ''
+        id, grade, classNum, studentNum, name,
+        domain, learningContent, keywords,
+        musicStyle, promptStructure, promptSituation, promptCustom,
+        aiLyrics, editedLyrics, sunoLink,
+        status, submittedAt, score, feedback
       ];
       
-      // 검색: ID 또는 학년/반/번호/이름 기준 최신 행 찾기 (동일 학생 행 중복 생성 방지)
+      // 검색: ID 또는 학년/반/번호/이름 기준 최신 행 찾기 (동일 학생 행 덮어쓰기 업데이트)
       var allRows = subSheet.getDataRange().getValues();
       var targetRow = -1;
-      var dataIdClean = String(data.id || '').replace(/^sub-/, '');
+      var idClean = String(id).replace(/^sub-/, '');
       
       for (var r = 1; r < allRows.length; r++) {
-        var rowId = String(allRows[r][0] || '').replace(/^sub-/, '');
+        var rowIdClean = String(allRows[r][0] || '').replace(/^sub-/, '');
         var g = Number(allRows[r][1]);
         var c = Number(allRows[r][2]);
         var n = Number(allRows[r][3]);
-        var name = String(allRows[r][4] || '');
+        var nm = String(allRows[r][4] || '');
         
-        if ((rowId && rowId === dataIdClean) || 
-            (g === Number(data.grade) && c === Number(data.classNum) && n === Number(data.studentNum) && name === String(data.name))) {
+        if ((rowIdClean && rowIdClean === idClean) || 
+            (g === Number(grade) && c === Number(classNum) && n === Number(studentNum) && nm === String(name))) {
           targetRow = r + 1;
           break;
         }
@@ -179,7 +199,7 @@ function doPost(e) {
         subSheet.appendRow(rowData);
       }
       
-      return ContentService.createTextOutput(JSON.stringify({ status: 'success' }))
+      return ContentService.createTextOutput(JSON.stringify({ status: 'success', row: targetRow > 0 ? targetRow : subSheet.getLastRow() }))
         .setMimeType(ContentService.MimeType.JSON);
     }
     
@@ -207,20 +227,29 @@ function doPost(e) {
     res.type("text/plain").send(gasCode);
   });
 
-  // GAS Proxy Endpoint to bypass browser CORS constraints when syncing to Google Apps Script
-  app.post("/api/sync-gas", async (req, res) => {
+  // Sheet API handler for /api/sheet and /api/sync-gas
+  const handleSheetSync = async (req: express.Request, res: express.Response) => {
     try {
-      const { gasUrl, payload } = req.body;
+      const bodyData = req.body || {};
+      const gasUrl = bodyData.gasUrl || process.env.NEXT_PUBLIC_GAS_URL || process.env.GAS_URL;
+
       if (!gasUrl) {
-        return res.status(400).json({ error: "gasUrl이 필요합니다." });
+        return res.status(400).json({ error: "GAS_URL이 제공되지 않았습니다." });
       }
+
+      // Format full JSON payload preserving all form keys
+      const payload = {
+        action: bodyData.action || "saveSubmission",
+        ...bodyData,
+        data: bodyData,
+      };
 
       const response = await fetch(gasUrl, {
         method: "POST",
         headers: {
-          "Content-Type": "text/plain;charset=utf-8",
+          "Content-Type": "application/json",
         },
-        body: typeof payload === "string" ? payload : JSON.stringify(payload),
+        body: JSON.stringify(payload),
       });
 
       const text = await response.text();
@@ -233,12 +262,15 @@ function doPost(e) {
 
       return res.json(resData);
     } catch (error: any) {
-      console.error("GAS proxy sync error:", error);
+      console.error("Sheet Sync API error:", error);
       return res.status(500).json({
-        error: error?.message || "GAS 동기화 중 오류가 발생했습니다.",
+        error: error?.message || "구글 시트 전송 중 오류가 발생했습니다.",
       });
     }
-  });
+  };
+
+  app.post("/api/sheet", handleSheetSync);
+  app.post("/api/sync-gas", handleSheetSync);
 
   // Fallback 404 handler for unmatched API routes
   app.all("/api/*", (_req, res) => {

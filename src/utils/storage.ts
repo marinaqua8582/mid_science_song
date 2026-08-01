@@ -239,6 +239,63 @@ export function saveSubmissions(submissions: StudentSubmission[]): void {
   }
 }
 
+export interface FormSubmissionPayload {
+  gasUrl?: string;
+  action?: string;
+  id: string;
+  grade: number;
+  classNum: number;
+  studentNum: number;
+  name: string;
+  domain: string;
+  learningContent: string;
+  keywords: string;
+  musicStyle: string;
+  promptStructure: string;
+  promptSituation: string;
+  promptCustom: string;
+  aiLyrics: string;
+  editedLyrics: string;
+  sunoLink: string;
+  status: string;
+  submittedAt: string;
+}
+
+export function buildSubmissionPayload(submission: StudentSubmission, gasUrl?: string): FormSubmissionPayload {
+  const step1 = submission.step1;
+  const step2 = submission.step2;
+  const step3 = submission.step3;
+  const step4 = submission.step4;
+
+  const keywordsStr = Array.isArray(step1?.keywords)
+    ? step1.keywords.join(', ')
+    : (step1?.keywords || '');
+
+  const submittedAtStr = step4?.finalSubmittedAt || submission.updatedAt || new Date().toLocaleString('ko-KR');
+
+  return {
+    gasUrl,
+    action: 'saveSubmission',
+    id: submission.id,
+    grade: submission.grade,
+    classNum: submission.classNum,
+    studentNum: submission.studentNum,
+    name: submission.name,
+    domain: step1?.unit || '',
+    learningContent: step1?.summary || '',
+    keywords: keywordsStr,
+    musicStyle: step2?.genre || '',
+    promptStructure: step2?.structurePrompt || '',
+    promptSituation: step2?.situationPrompt || '',
+    promptCustom: step2?.customPrompt || '',
+    aiLyrics: step2?.generatedLyrics || '',
+    editedLyrics: step3?.editedLyrics || '',
+    sunoLink: step4?.sunoUrl || '',
+    status: submission.status,
+    submittedAt: submittedAtStr,
+  };
+}
+
 export function updateSingleSubmission(submission: StudentSubmission): void {
   const current = loadSubmissions();
   const idx = current.findIndex(s => s.id === submission.id);
@@ -259,19 +316,40 @@ export function updateSingleSubmission(submission: StudentSubmission): void {
 }
 
 export async function syncSubmissionToGAS(gasUrl: string, submission: StudentSubmission): Promise<boolean> {
+  const bodyData = buildSubmissionPayload(submission, gasUrl);
+
+  // 1. Send full JSON object to backend API endpoint (/api/sheet) with application/json header
+  try {
+    const apiRes = await fetch('/api/sheet', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(bodyData),
+    });
+
+    if (apiRes.ok) {
+      const data = await apiRes.json().catch(() => null);
+      if (data && data.status === 'success') return true;
+    }
+  } catch (e) {
+    // API route fallback
+  }
+
   if (!gasUrl || !gasUrl.startsWith('http')) return false;
 
   const payload = {
     action: 'saveSubmission',
-    data: submission
+    data: bodyData,
+    ...bodyData,
   };
 
-  // 1. Direct browser fetch using text/plain to avoid CORS preflight
+  // 2. Direct fetch fallback to GAS URL
   try {
     const response = await fetch(gasUrl, {
       method: 'POST',
       headers: {
-        'Content-Type': 'text/plain;charset=utf-8',
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload)
     });
@@ -280,10 +358,10 @@ export async function syncSubmissionToGAS(gasUrl: string, submission: StudentSub
       if (resData && resData.status === 'success') return true;
     }
   } catch (e) {
-    // Direct CORS response restricted by browser security policies
+    // Direct CORS fallback
   }
 
-  // 2. Fallback to mode: 'no-cors' to reliably deliver payload to GAS without browser CORS blocks
+  // 3. Fallback using mode: 'no-cors'
   try {
     await fetch(gasUrl, {
       method: 'POST',
