@@ -117,9 +117,10 @@ function saveRoster_(roster) {
 function getSubmissionSheet_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var named = ss.getSheetByName(SUBMISSIONS_SHEET_NAME);
-  if (named && named.getLastRow() > 1) return named;
-
   var sheets = ss.getSheets();
+  var bestSheet = null;
+  var bestScore = -1;
+
   for (var i = 0; i < sheets.length; i++) {
     var sheet = sheets[i];
     if (sheet.getName() === ROSTER_SHEET_NAME || sheet.getLastRow() === 0) continue;
@@ -128,10 +129,34 @@ function getSubmissionSheet_() {
       .map(function(value) { return String(value || '').trim(); });
     var isCanonical = headers.indexOf('ID') >= 0 && headers.indexOf('이름') >= 0;
     var isLegacy = headers.indexOf('최종수정시각') >= 0 && headers.indexOf('이름') >= 0;
-    if ((isCanonical || isLegacy) && sheet.getLastRow() > 1) return sheet;
+    if (!isCanonical && !isLegacy) continue;
+
+    var validRows = countValidSubmissionRows_(sheet, isLegacy);
+    // 실제 학생 행이 많은 탭을 선택합니다. 같은 수라면 기존 14열 시트를 우선하여
+    // 과거 코드가 만든 빈/시험용 Submissions 탭에 가려지는 일을 막습니다.
+    var score = validRows * 1000 + (isLegacy ? 100 : 0) +
+      (sheet.getName() === SUBMISSIONS_SHEET_NAME ? 1 : 0);
+    if (score > bestScore) {
+      bestScore = score;
+      bestSheet = sheet;
+    }
   }
 
-  return named || ss.insertSheet(SUBMISSIONS_SHEET_NAME);
+  return bestSheet || named || ss.insertSheet(SUBMISSIONS_SHEET_NAME);
+}
+
+function countValidSubmissionRows_(sheet, isLegacy) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 0;
+
+  var startColumn = isLegacy ? 2 : 3;
+  var rows = sheet.getRange(2, startColumn, lastRow - 1, 3).getValues();
+  var count = 0;
+  for (var i = 0; i < rows.length; i++) {
+    if (Number(rows[i][0]) > 0 && Number(rows[i][1]) > 0 &&
+        String(rows[i][2] || '').trim()) count++;
+  }
+  return count;
 }
 
 function getSubmissionObjects_() {
