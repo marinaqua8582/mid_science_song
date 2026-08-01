@@ -66,9 +66,6 @@ export const StudentLogin: React.FC<Props> = ({ roster, onLogin }) => {
 
   return (
     <div className="max-w-md mx-auto space-y-4">
-      {/* Privacy Notice Banner shown ONLY on student info entry screen */}
-      <PrivacyBanner />
-
       <div className="bg-white rounded-2xl shadow-xl border border-slate-200/80 p-6 md:p-8 transition-all">
         <div className="text-center space-y-3 mb-6">
           <div className="w-14 h-14 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
@@ -76,7 +73,7 @@ export const StudentLogin: React.FC<Props> = ({ roster, onLogin }) => {
           </div>
           <h2 className="text-2xl font-bold text-slate-800 tracking-tight">학생 로그인</h2>
           <p className="text-sm text-slate-500">
-            학급 명단 정보를 선택한 후 이름을 입력하고 수행평가를 시작하세요.
+            반, 번호를 선택한 후 이름을 입력하고 수행평가를 시작하세요.
           </p>
         </div>
 
@@ -157,6 +154,9 @@ export const StudentLogin: React.FC<Props> = ({ roster, onLogin }) => {
           </button>
         </form>
       </div>
+
+      {/* Privacy Notice Banner placed at the bottom */}
+      <PrivacyBanner />
     </div>
   );
 };
