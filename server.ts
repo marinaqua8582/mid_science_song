@@ -143,6 +143,61 @@ function doPost(e) {
     var action = contents.action || 'saveSubmission';
     var sheet = SpreadsheetApp.getActiveSpreadsheet();
     
+    if (action === 'getStudentData' || action === 'getSubmission') {
+      var subSheet = sheet.getSheetByName('Submissions') || sheet.insertSheet('Submissions');
+      var allRows = subSheet.getDataRange().getValues();
+      var pData = contents.data || contents;
+      var targetGrade = Number(pData.grade || contents.grade || 0);
+      var targetClass = Number(pData.classNum !== undefined ? pData.classNum : contents.classNum);
+      var targetNum = Number(pData.studentNum !== undefined ? pData.studentNum : contents.studentNum);
+      var targetName = String(pData.name || contents.name || '').trim();
+      var targetId = String(pData.id || contents.id || '').replace(/^sub-/, '');
+
+      var foundRow = null;
+      for (var r = 1; r < allRows.length; r++) {
+        var rowIdClean = String(allRows[r][0] || '').replace(/^sub-/, '');
+        var g = Number(allRows[r][1]);
+        var c = Number(allRows[r][2]);
+        var n = Number(allRows[r][3]);
+        var nm = String(allRows[r][4] || '').trim();
+
+        if ((targetId && rowIdClean && rowIdClean === targetId) ||
+            (g === targetGrade && c === targetClass && n === targetNum && nm === targetName)) {
+          foundRow = allRows[r];
+          break;
+        }
+      }
+
+      if (foundRow) {
+        var studentData = {
+          id: foundRow[0],
+          grade: foundRow[1],
+          classNum: foundRow[2],
+          studentNum: foundRow[3],
+          name: foundRow[4],
+          domain: foundRow[5],
+          learningContent: foundRow[6],
+          keywords: foundRow[7],
+          musicStyle: foundRow[8],
+          promptStructure: foundRow[9],
+          promptSituation: foundRow[10],
+          promptCustom: foundRow[11],
+          aiLyrics: foundRow[12],
+          editedLyrics: foundRow[13],
+          sunoLink: foundRow[14],
+          status: foundRow[15],
+          submittedAt: foundRow[16],
+          score: foundRow[17],
+          feedback: foundRow[18]
+        };
+        return ContentService.createTextOutput(JSON.stringify({ status: 'success', found: true, data: studentData }))
+          .setMimeType(ContentService.MimeType.JSON);
+      } else {
+        return ContentService.createTextOutput(JSON.stringify({ status: 'success', found: false }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+
     if (action === 'saveSubmission') {
       var subSheet = sheet.getSheetByName('Submissions') || sheet.insertSheet('Submissions');
       if (subSheet.getLastRow() === 0) {
@@ -238,11 +293,13 @@ function doPost(e) {
     res.type("text/plain").send(gasCode);
   });
 
+  const DEFAULT_GAS_URL = "https://script.google.com/macros/s/AKfycbwnhnAzyN6HP__bXd0N_KzTY-GZOZ8ayqO6BD0i_iaMJPuxUGNsFDKys7c38VFleeJnDg/exec";
+
   // Sheet API handler for /api/sheet and /api/sync-gas
   const handleSheetSync = async (req: express.Request, res: express.Response) => {
     try {
       const bodyData = req.body || {};
-      const gasUrl = bodyData.gasUrl || process.env.NEXT_PUBLIC_GAS_URL || process.env.GAS_URL;
+      const gasUrl = process.env.NEXT_PUBLIC_GAS_URL || process.env.GAS_URL || process.env.VITE_GAS_URL || bodyData.gasUrl || DEFAULT_GAS_URL;
 
       if (!gasUrl) {
         return res.status(400).json({ error: "GAS_URL이 제공되지 않았습니다." });

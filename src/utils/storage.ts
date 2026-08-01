@@ -5,17 +5,31 @@ const SETTINGS_KEY = 'science_song_app_settings';
 const ROSTER_KEY = 'science_song_roster';
 const SUBMISSIONS_KEY = 'science_song_submissions';
 
+export function getGasUrl(): string {
+  const metaEnv = (import.meta as any).env || {};
+  const envUrl = metaEnv.NEXT_PUBLIC_GAS_URL ||
+                 metaEnv.VITE_GAS_URL ||
+                 (typeof window !== 'undefined' && ((window as any).NEXT_PUBLIC_GAS_URL || (window as any).GAS_URL)) ||
+                 'https://script.google.com/macros/s/AKfycbwnhnAzyN6HP__bXd0N_KzTY-GZOZ8ayqO6BD0i_iaMJPuxUGNsFDKys7c38VFleeJnDg/exec';
+  return envUrl;
+}
+
 export const getDefaultSettings = (): AppSettings => ({
   teacherPin: '1234',
-  gasUrl: '',
+  gasUrl: getGasUrl(),
   rubrics: DEFAULT_RUBRICS,
 });
 
 export function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return getDefaultSettings();
-    return JSON.parse(raw);
+    const defaults = getDefaultSettings();
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw);
+    return {
+      ...parsed,
+      gasUrl: getGasUrl(), // Always prioritize process.env / global GAS_URL over local storage
+    };
   } catch (e) {
     console.error('Failed to load settings', e);
     return getDefaultSettings();
@@ -296,6 +310,126 @@ export function buildSubmissionPayload(submission: StudentSubmission, gasUrl?: s
   };
 }
 
+export function parseGasDataToSubmission(data: any): StudentSubmission {
+  const keywordsArr = typeof data.keywords === 'string'
+    ? data.keywords.split(',').map((k: string) => k.trim()).filter(Boolean)
+    : (Array.isArray(data.keywords) ? data.keywords : []);
+
+  const hasStep1 = Boolean(data.domain || data.learningContent || keywordsArr.length > 0);
+  const hasStep2 = Boolean(data.musicStyle || data.aiLyrics);
+  const hasStep3 = Boolean(data.editedLyrics);
+  const hasStep4 = Boolean(data.sunoLink);
+
+  let status: StudentSubmission['status'] = 'not_started';
+  if (data.status === 'completed' || hasStep4) {
+    status = 'completed';
+  } else if (data.status === 'step3' || hasStep3) {
+    status = 'step3';
+  } else if (data.status === 'step2' || hasStep2) {
+    status = 'step2';
+  } else if (data.status === 'step1' || hasStep1) {
+    status = 'step1';
+  }
+
+  const subId = data.id || `sub-${data.grade}-${data.classNum}-${data.studentNum}`;
+
+  return {
+    id: subId,
+    grade: Number(data.grade),
+    classNum: Number(data.classNum),
+    studentNum: Number(data.studentNum),
+    name: String(data.name),
+    status,
+    step1: hasStep1 ? {
+      unit: data.domain || '',
+      summary: data.learningContent || '',
+      keywords: keywordsArr,
+      savedAt: data.submittedAt || new Date().toLocaleString('ko-KR')
+    } : null,
+    step2: hasStep2 ? {
+      genre: data.musicStyle || '',
+      structurePrompt: data.promptStructure || '',
+      situationPrompt: data.promptSituation || '',
+      customPrompt: data.promptCustom || '',
+      generatedLyrics: data.aiLyrics || '',
+      generatedAt: data.submittedAt || new Date().toLocaleString('ko-KR')
+    } : null,
+    step3: hasStep3 ? {
+      editedLyrics: data.editedLyrics || data.aiLyrics || '',
+      hasSelfEdited: Boolean(data.editedLyrics && data.editedLyrics !== data.aiLyrics),
+      reviewedAt: data.submittedAt || new Date().toLocaleString('ko-KR')
+    } : null,
+    step4: hasStep4 ? {
+      sunoUrl: data.sunoLink || '',
+      finalSubmittedAt: data.submittedAt || new Date().toLocaleString('ko-KR')
+    } : null,
+    updatedAt: data.submittedAt || new Date().toLocaleString('ko-KR'),
+    evaluation: (data.score || data.feedback) ? {
+      totalScore: Number(data.score) || 0,
+      maxScore: 100,
+      scores: {},
+      feedback: data.feedback || '',
+      evaluatedAt: new Date().toLocaleString('ko-KR')
+    } : null
+  };
+}
+
+export async function fetchStudentDataFromGAS(
+  grade: number,
+  classNum: number,
+  studentNum: number,
+  name: string
+): Promise<StudentSubmission | null> {
+  const payload = {
+    action: 'getStudentData',
+    grade,
+    classNum,
+    studentNum,
+    name,
+    id: `sub-${grade}-${classNum}-${studentNum}`
+  };
+
+  // 1. Backend proxy API (/api/sheet) for backend stability
+  try {
+    const apiRes = await fetch('/api/sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (apiRes.ok) {
+      const data = await apiRes.json().catch(() => null);
+      if (data && data.status === 'success' && data.found && data.data) {
+        return parseGasDataToSubmission(data.data);
+      }
+    }
+  } catch (e) {
+    console.warn('Backend proxy fetch student error:', e);
+  }
+
+  // 2. Direct fetch to GAS URL if needed
+  const gasUrl = getGasUrl();
+  if (gasUrl && gasUrl.startsWith('http')) {
+    try {
+      const res = await fetch(gasUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data && data.status === 'success' && data.found && data.data) {
+          return parseGasDataToSubmission(data.data);
+        }
+      }
+    } catch (e) {
+      console.warn('Direct GAS fetch student error:', e);
+    }
+  }
+
+  return null;
+}
+
 export function updateSingleSubmission(submission: StudentSubmission): void {
   const current = loadSubmissions();
   const idx = current.findIndex(s => s.id === submission.id);
@@ -306,21 +440,35 @@ export function updateSingleSubmission(submission: StudentSubmission): void {
   }
   saveSubmissions(current);
 
-  // Sync to Google Apps Script if URL exists
-  const settings = loadSettings();
-  if (settings.gasUrl) {
-    syncSubmissionToGAS(settings.gasUrl, submission).catch(err => {
-      console.warn('GAS sync warning:', err);
-    });
-  }
+  // Immediately sync to Google Apps Script via /api/sheet backend proxy
+  syncSubmissionToGAS(submission).catch(err => {
+    console.warn('GAS sync warning:', err);
+  });
 }
 
-export async function syncSubmissionToGAS(gasUrl: string, submission: StudentSubmission): Promise<boolean> {
-  const bodyData = buildSubmissionPayload(submission, gasUrl);
+export async function syncSubmissionToGAS(submission: StudentSubmission, gasUrlParam?: string): Promise<boolean> {
+  const targetGasUrl = gasUrlParam || getGasUrl();
+  const bodyData = buildSubmissionPayload(submission, targetGasUrl);
 
-  const targetGasUrl = gasUrl || (typeof window !== 'undefined' && (window as any).GAS_URL) || '';
+  // 1. Backend proxy API (/api/sheet)
+  try {
+    const apiRes = await fetch('/api/sheet', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(bodyData),
+    });
 
-  // 1. Direct fetch to Google Apps Script URL using text/plain (avoids browser CORS OPTIONS preflight block)
+    if (apiRes.ok) {
+      const data = await apiRes.json().catch(() => null);
+      if (data && data.status === 'success') return true;
+    }
+  } catch (e) {
+    console.warn('API route sheet sync warning:', e);
+  }
+
+  // 2. Direct fetch to Google Apps Script URL as fallback
   if (targetGasUrl && targetGasUrl.startsWith('http')) {
     const payload = {
       action: 'saveSubmission',
@@ -342,41 +490,21 @@ export async function syncSubmissionToGAS(gasUrl: string, submission: StudentSub
         if (resData && resData.status === 'success') return true;
       }
     } catch (e) {
-      // Direct fetch restricted by browser CORS security policy, proceed to fallback
+      // Fallback: mode 'no-cors'
+      try {
+        await fetch(targetGasUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8',
+          },
+          body: JSON.stringify(payload),
+        });
+        return true;
+      } catch (err) {
+        console.warn('Direct GAS sync warning:', err);
+      }
     }
-
-    // Fallback: mode 'no-cors' to guarantee submission delivery to Google Apps Script
-    try {
-      await fetch(targetGasUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8',
-        },
-        body: JSON.stringify(payload),
-      });
-      return true;
-    } catch (err) {
-      console.warn('Direct GAS sync warning:', err);
-    }
-  }
-
-  // 2. Try backend proxy API (/api/sheet) if available
-  try {
-    const apiRes = await fetch('/api/sheet', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(bodyData),
-    });
-
-    if (apiRes.ok) {
-      const data = await apiRes.json().catch(() => null);
-      if (data && data.status === 'success') return true;
-    }
-  } catch (e) {
-    // API proxy not present on static deployment
   }
 
   return false;

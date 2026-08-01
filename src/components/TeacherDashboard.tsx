@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { StudentSubmission, StudentRosterItem, AppSettings, RubricCriterion } from '../types';
-import { saveRoster, saveSettings, updateSingleSubmission, syncRosterToGAS } from '../utils/storage';
+import { saveRoster, saveSettings, updateSingleSubmission, syncRosterToGAS, getGasUrl } from '../utils/storage';
 import { PrintableReport } from './PrintableReport';
 import { diffLyrics } from '../utils/diff';
 import * as XLSX from 'xlsx';
@@ -956,36 +956,26 @@ function doPost(e) {
           <div>
             <h3 className="text-lg font-bold text-slate-900">Google Sheets 및 GAS 웹 앱 연동</h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Google Apps Script Web App URL을 설정하여 수행평가 데이터를 실시간 자동 동기화합니다.
+              전역 시스템 환경변수(<code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-700 font-mono">process.env.NEXT_PUBLIC_GAS_URL</code>)로 지정된 구글 시트 웹 앱 URL을 통해 모든 학생의 작업 데이터가 실시간 자동 동기화됩니다.
             </p>
           </div>
 
-          {/* URL Input Form */}
-          <div className="p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-4">
-            <label className="text-xs font-bold text-slate-800 block">
-              Google Apps Script 배포 URL (Web App URL)
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="url"
-                value={gasUrlInput}
-                onChange={(e) => setGasUrlInput(e.target.value)}
-                placeholder="https://script.google.com/macros/s/.../exec"
-                className="flex-1 px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-              />
-              <button
-                onClick={handleSaveGasSettings}
-                className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow transition-all shrink-0 flex items-center gap-1"
-              >
-                <Save className="w-4 h-4" /> URL 저장
-              </button>
+          {/* Fixed URL Banner */}
+          <div className="p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-800 block">
+                전역 API 연동 구글 시트 배포 URL (고정)
+              </label>
+              <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 text-[11px] font-bold rounded-full flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5" /> 전역 환경변수 적용됨
+              </span>
             </div>
-            {settings.gasUrl && (
-              <div className="flex items-center gap-2 pt-1 text-xs text-emerald-700 font-medium">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                Google Sheets 연결 설정 완료
-              </div>
-            )}
+            <div className="p-3 bg-white border border-slate-300 rounded-xl text-xs font-mono text-slate-700 break-all select-all font-medium">
+              {getGasUrl()}
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              * 기기 이동이나 브라우저 변경 시에도 데이터가 유실되지 않도록 LocalStorage 관리를 중단하고 백엔드 고정 환경변수를 사용합니다.
+            </p>
           </div>
 
           {/* GAS Instructions */}
@@ -996,7 +986,7 @@ function doPost(e) {
               </div>
               <button
                 onClick={handleCopyGasCode}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow transition-all flex items-center gap-1"
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow transition-all flex items-center gap-1 cursor-pointer"
               >
                 {copiedGas ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                 {copiedGas ? '복사 완료!' : '스크립트 코드 복사'}
@@ -1005,7 +995,7 @@ function doPost(e) {
             <p className="text-xs text-indigo-900 leading-relaxed">
               1) 사용 중인 Google Sheets 문서에서 [확장 프로그램] &gt; [Apps Script]를 클릭합니다.<br />
               2) 위 버튼으로 복사한 코드를 기주 편집기에 붙여넣고 저장합니다.<br />
-              3) [배포] &gt; [새 배포] &gt; 유형: [웹 앱] 선택 후 <strong>'액세스 권한: 모든 사용자(Anyone)'</strong>로 설정하여 배포한 URL을 입력 칸에 붙여넣으세요.
+              3) [배포] &gt; [새 배포] &gt; 유형: [웹 앱] 선택 후 <strong>'액세스 권한: 모든 사용자(Anyone)'</strong>로 설정하여 배포를 완료하세요.
             </p>
           </div>
         </div>

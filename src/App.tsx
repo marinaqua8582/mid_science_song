@@ -5,7 +5,7 @@ import {
 } from './types';
 import {
   loadSettings, loadRoster, loadSubmissions, saveSubmissions,
-  updateSingleSubmission, getDefaultSettings
+  updateSingleSubmission, getDefaultSettings, fetchStudentDataFromGAS
 } from './utils/storage';
 import { PrivacyBanner } from './components/PrivacyBanner';
 import { StudentLogin } from './components/StudentLogin';
@@ -65,20 +65,64 @@ export default function App() {
       }
     : null;
 
+  const [isLoadingStudentData, setIsLoadingStudentData] = useState<boolean>(false);
+
   // Handle Student Login
-  const handleStudentLogin = (student: StudentRosterItem) => {
+  const handleStudentLogin = async (student: StudentRosterItem) => {
+    setIsLoadingStudentData(true);
     setCurrentStudent(student);
-    const existing = submissions.find(s => s.id === `sub-${student.id}`);
-    if (existing?.step4?.finalSubmittedAt) {
-      setActiveStep(4);
-    } else if (existing?.step3) {
-      setActiveStep(4);
-    } else if (existing?.step2) {
-      setActiveStep(3);
-    } else if (existing?.step1) {
-      setActiveStep(2);
-    } else {
+
+    try {
+      // 1. Fetch existing submission data from Google Sheets (GAS)
+      const gasData = await fetchStudentDataFromGAS(
+        student.grade,
+        student.classNum,
+        student.studentNum,
+        student.name
+      );
+
+      if (gasData) {
+        // Exists in Google Sheets! Restore student submission and update state/localstorage
+        updateSingleSubmission(gasData);
+        const updatedSubs = loadSubmissions();
+        setSubmissions(updatedSubs);
+
+        // Calculate step based on restored data
+        if (gasData.step4?.sunoUrl || gasData.status === 'completed') {
+          setActiveStep(4);
+        } else if (gasData.step3?.editedLyrics || gasData.status === 'step3') {
+          setActiveStep(4);
+        } else if (gasData.step2?.generatedLyrics || gasData.status === 'step2') {
+          setActiveStep(3);
+        } else if (gasData.step1?.summary || gasData.status === 'step1') {
+          setActiveStep(2);
+        } else {
+          setActiveStep(1);
+        }
+      } else {
+        // Not found in Google Sheets, check local submissions or initialize new
+        const existing = submissions.find(s => s.id === `sub-${student.id}` || (s.classNum === student.classNum && s.studentNum === student.studentNum && s.name === student.name));
+        if (existing) {
+          if (existing.step4?.finalSubmittedAt) {
+            setActiveStep(4);
+          } else if (existing.step3) {
+            setActiveStep(4);
+          } else if (existing.step2) {
+            setActiveStep(3);
+          } else if (existing.step1) {
+            setActiveStep(2);
+          } else {
+            setActiveStep(1);
+          }
+        } else {
+          setActiveStep(1);
+        }
+      }
+    } catch (e) {
+      console.error('Error fetching student data from GAS:', e);
       setActiveStep(1);
+    } finally {
+      setIsLoadingStudentData(false);
     }
   };
 
@@ -233,7 +277,7 @@ export default function App() {
           <div className="space-y-6">
             {!currentStudent ? (
               /* Student Login Form */
-              <StudentLogin roster={roster} onLogin={handleStudentLogin} />
+              <StudentLogin roster={roster} isLoading={isLoadingStudentData} onLogin={handleStudentLogin} />
             ) : layoutMode === 'sidebar' ? (
               /* --- SIDEBAR FRAME LAYOUT (Modern Dashboard Shell) --- */
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">

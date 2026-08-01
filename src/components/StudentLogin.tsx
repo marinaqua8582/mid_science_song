@@ -1,14 +1,15 @@
 import React, { useState, useMemo } from 'react';
 import { StudentRosterItem } from '../types';
-import { UserCheck, AlertCircle, LogIn, Sparkles, BookOpen } from 'lucide-react';
+import { UserCheck, AlertCircle, LogIn, Sparkles, BookOpen, Loader2 } from 'lucide-react';
 import { PrivacyBanner } from './PrivacyBanner';
 
 interface Props {
   roster: StudentRosterItem[];
+  isLoading?: boolean;
   onLogin: (student: StudentRosterItem) => void;
 }
 
-export const StudentLogin: React.FC<Props> = ({ roster, onLogin }) => {
+export const StudentLogin: React.FC<Props> = ({ roster, isLoading = false, onLogin }) => {
   const [selectedClass, setSelectedClass] = useState<number>(0); // 0 means default unselected
   const [selectedNum, setSelectedNum] = useState<number>(0); // 0 means default unselected
   const [nameInput, setNameInput] = useState<string>('');
@@ -17,7 +18,7 @@ export const StudentLogin: React.FC<Props> = ({ roster, onLogin }) => {
   // Extract available classes from roster
   const availableClasses = useMemo(() => {
     const classes = Array.from(new Set(roster.map(r => Number(r.classNum)))).sort((a: number, b: number) => a - b);
-    return classes.length > 0 ? classes : [1, 2, 3];
+    return classes.length > 0 ? classes : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
   }, [roster]);
 
   // Extract available numbers for selected class
@@ -27,7 +28,7 @@ export const StudentLogin: React.FC<Props> = ({ roster, onLogin }) => {
     if (filtered.length > 0) {
       return filtered.map(r => Number(r.studentNum)).sort((a: number, b: number) => a - b);
     }
-    return Array.from({ length: 30 }, (_, i) => i + 1);
+    return Array.from({ length: 35 }, (_, i) => i + 1);
   }, [roster, selectedClass]);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -50,18 +51,26 @@ export const StudentLogin: React.FC<Props> = ({ roster, onLogin }) => {
       return;
     }
 
-    // Find student in roster
-    const match = roster.find(
-      r => r.classNum === Number(selectedClass) &&
-           r.studentNum === Number(selectedNum) &&
+    // Find student in roster or create dynamic student item
+    let match = roster.find(
+      r => Number(r.classNum) === Number(selectedClass) &&
+           Number(r.studentNum) === Number(selectedNum) &&
            r.name.trim() === trimmedName
     );
 
-    if (match) {
-      onLogin(match);
-    } else {
-      setErrorMessage(`2학년 ${selectedClass}반 ${selectedNum}번 학생 명단에 '${trimmedName}' 학생이 없습니다. 반, 번호, 이름을 정확히 확인해 주세요.`);
+    if (!match) {
+      // If roster is empty or student is not in roster, allow dynamic creation
+      const formattedNum = selectedNum < 10 ? `0${selectedNum}` : `${selectedNum}`;
+      match = {
+        id: `2-${selectedClass}-${formattedNum}`,
+        grade: 2,
+        classNum: Number(selectedClass),
+        studentNum: Number(selectedNum),
+        name: trimmedName,
+      };
     }
+
+    onLogin(match);
   };
 
   return (
@@ -87,12 +96,13 @@ export const StudentLogin: React.FC<Props> = ({ roster, onLogin }) => {
               </label>
               <select
                 value={selectedClass}
+                disabled={isLoading}
                 onChange={(e) => {
                   const c = Number(e.target.value);
                   setSelectedClass(c);
                   setSelectedNum(0); // Reset number selection on class change
                 }}
-                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all text-sm"
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all text-sm disabled:opacity-50"
               >
                 <option value={0}>--반 선택--</option>
                 {availableClasses.map((c) => (
@@ -112,7 +122,7 @@ export const StudentLogin: React.FC<Props> = ({ roster, onLogin }) => {
               <select
                 value={selectedNum}
                 onChange={(e) => setSelectedNum(Number(e.target.value))}
-                disabled={selectedClass === 0}
+                disabled={selectedClass === 0 || isLoading}
                 className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all text-sm disabled:opacity-50 disabled:bg-slate-100"
               >
                 <option value={0}>--번호 선택--</option>
@@ -132,8 +142,9 @@ export const StudentLogin: React.FC<Props> = ({ roster, onLogin }) => {
               type="text"
               placeholder="이름을 입력하세요 (예: 김과학)"
               value={nameInput}
+              disabled={isLoading}
               onChange={(e) => setNameInput(e.target.value)}
-              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all text-sm"
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all text-sm disabled:opacity-50"
             />
           </div>
 
@@ -147,10 +158,20 @@ export const StudentLogin: React.FC<Props> = ({ roster, onLogin }) => {
 
           <button
             type="submit"
-            className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 text-sm"
+            disabled={isLoading}
+            className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-75 cursor-pointer"
           >
-            <LogIn className="w-4 h-4" />
-            수행평가 시작하기
+            {isLoading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                구글 시트에서 기존 데이터 불러오는 중...
+              </>
+            ) : (
+              <>
+                <LogIn className="w-4 h-4" />
+                수행평가 시작하기
+              </>
+            )}
           </button>
         </form>
       </div>
