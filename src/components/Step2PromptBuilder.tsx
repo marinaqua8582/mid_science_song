@@ -61,7 +61,15 @@ export const Step2PromptBuilder: React.FC<Props> = ({
         })
       });
 
-      const resData = await response.json();
+      const contentType = response.headers.get('content-type') || '';
+      let resData: any = {};
+      if (contentType.includes('application/json')) {
+        resData = await response.json();
+      } else {
+        const text = await response.text();
+        throw new Error(`서버 응답 오류 (${response.status}): 서버에서 올바른 JSON 응답을 받지 못했습니다.`);
+      }
+
       if (!response.ok) {
         throw new Error(resData.error || 'Gemini AI 가사 생성 실패');
       }

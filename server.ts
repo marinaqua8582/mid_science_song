@@ -191,6 +191,11 @@ function doPost(e) {
     res.type("text/plain").send(gasCode);
   });
 
+  // Fallback 404 handler for unmatched API routes
+  app.all("/api/*", (_req, res) => {
+    res.status(404).json({ error: "요청하신 API 엔드포인트를 찾을 수 없습니다." });
+  });
+
   // Vite middleware setup
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
