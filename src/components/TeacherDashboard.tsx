@@ -497,13 +497,35 @@ function doPost(e) {
 
   // Combine roster and submissions so every student in roster has a StudentSubmission record
   const mergedSubmissions: StudentSubmission[] = React.useMemo(() => {
-    const allRosterSubmissions: StudentSubmission[] = roster.map(student => {
+    // 1. First deduplicate roster
+    const seenRoster = new Set<string>();
+    const uniqueRoster: StudentRosterItem[] = [];
+    for (const r of roster) {
+      const formattedNum = r.studentNum < 10 ? `0${r.studentNum}` : `${r.studentNum}`;
+      const key = r.id || `${r.grade}-${r.classNum}-${formattedNum}`;
+      if (!seenRoster.has(key)) {
+        seenRoster.add(key);
+        uniqueRoster.push({ ...r, id: key });
+      }
+    }
+
+    const allRosterSubmissions: StudentSubmission[] = uniqueRoster.map(student => {
+      const formattedNum = student.studentNum < 10 ? `0${student.studentNum}` : `${student.studentNum}`;
+      const targetSubId = `sub-${student.grade}-${student.classNum}-${formattedNum}`;
+
       const found = submissions.find(
-        s => s.id === `sub-${student.id}` || (s.classNum === student.classNum && s.studentNum === student.studentNum && s.name === student.name)
+        s => s.id === targetSubId ||
+             s.id === `sub-${student.id}` ||
+             (s.classNum === student.classNum && s.studentNum === student.studentNum && s.name === student.name)
       );
-      if (found) return found;
+      if (found) {
+        return {
+          ...found,
+          id: targetSubId
+        };
+      }
       return {
-        id: `sub-${student.id}`,
+        id: targetSubId,
         grade: student.grade,
         classNum: student.classNum,
         studentNum: student.studentNum,
@@ -520,7 +542,19 @@ function doPost(e) {
 
     const rosterKeys = new Set(allRosterSubmissions.map(s => s.id));
     const extraSubmissions = submissions.filter(s => !rosterKeys.has(s.id));
-    return [...allRosterSubmissions, ...extraSubmissions];
+
+    const combined = [...allRosterSubmissions, ...extraSubmissions];
+    const seenSubIds = new Set<string>();
+    const result: StudentSubmission[] = [];
+
+    for (const sub of combined) {
+      if (!seenSubIds.has(sub.id)) {
+        seenSubIds.add(sub.id);
+        result.push(sub);
+      }
+    }
+
+    return result;
   }, [roster, submissions]);
 
   // Helper to determine status key
@@ -835,8 +869,8 @@ function doPost(e) {
                       </td>
                     </tr>
                   ) : (
-                    filteredSubmissions.map((sub) => (
-                      <tr key={sub.id} className="hover:bg-slate-50 transition-colors">
+                    filteredSubmissions.map((sub, idx) => (
+                      <tr key={`${sub.id}-${idx}`} className="hover:bg-slate-50 transition-colors">
                         <td className="p-3 font-semibold">
                           2-{sub.classNum}-{sub.studentNum < 10 ? '0' + sub.studentNum : sub.studentNum}
                         </td>
@@ -1062,8 +1096,8 @@ function doPost(e) {
                       </td>
                     </tr>
                   ) : (
-                    roster.map((student) => (
-                      <tr key={student.id} className="hover:bg-slate-50 transition-colors">
+                    roster.map((student, idx) => (
+                      <tr key={`${student.id}-${idx}`} className="hover:bg-slate-50 transition-colors">
                         <td className="p-3 font-mono text-slate-500">{student.id}</td>
                         <td className="p-3">{student.grade}학년</td>
                         <td className="p-3 font-semibold text-indigo-700">{student.classNum}반</td>
