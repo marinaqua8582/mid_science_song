@@ -28,13 +28,13 @@ export const Step2PromptBuilder: React.FC<Props> = ({
 }) => {
   const [genre, setGenre] = useState<string>(initialData?.genre || 'K-Pop');
   const [structurePrompt, setStructurePrompt] = useState<string>(
-    initialData?.structurePrompt || '1절은 들숨, 2절은 날숨, 후렴은 내호흡 외호흡 내용'
+    initialData?.structurePrompt || ''
   );
   const [situationPrompt, setSituationPrompt] = useState<string>(
-    initialData?.situationPrompt || '과학 시간에 친구들과 신나게 노래 부르는 무대 상황'
+    initialData?.situationPrompt || ''
   );
   const [customPrompt, setCustomPrompt] = useState<string>(
-    initialData?.customPrompt || '후렴구에 핵심 개념 단어가 반복되도록 운율을 살려 작성'
+    initialData?.customPrompt || ''
   );
 
   const [generatedLyrics, setGeneratedLyrics] = useState<string>(initialData?.generatedLyrics || '');
