@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { StudentRosterItem } from '../types';
 import { UserCheck, AlertCircle, LogIn, Sparkles, BookOpen, Loader2 } from 'lucide-react';
 import { PrivacyBanner } from './PrivacyBanner';
@@ -7,40 +7,43 @@ interface Props {
   roster: StudentRosterItem[];
   isLoading?: boolean;
   onLogin: (student: StudentRosterItem) => void;
+  onRefreshRoster?: () => Promise<StudentRosterItem[]>;
 }
 
-export const StudentLogin: React.FC<Props> = ({ roster, isLoading = false, onLogin }) => {
+export const StudentLogin: React.FC<Props> = ({ roster, isLoading = false, onLogin, onRefreshRoster }) => {
   const [selectedClass, setSelectedClass] = useState<number>(0); // 0 means default unselected
   const [selectedNum, setSelectedNum] = useState<number>(0); // 0 means default unselected
   const [nameInput, setNameInput] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string>('');
 
-  // Extract available classes from roster
-  const availableClasses = useMemo(() => {
-    const classes = Array.from(new Set(roster.map(r => Number(r.classNum)))).sort((a: number, b: number) => a - b);
-    return classes.length > 0 ? classes : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  // Silently refresh roster from Google Sheets on mount if needed
+  useEffect(() => {
+    if (onRefreshRoster) {
+      onRefreshRoster().catch(() => {});
+    }
+  }, [onRefreshRoster]);
+
+  // Extract available classes strictly based on registered student roster
+  const availableClasses = useMemo<number[]>(() => {
+    if (!roster || roster.length === 0) return [];
+    const classes = roster
+      .map(r => Number(r.classNum))
+      .filter((c): c is number => !isNaN(c) && c > 0)
+      .filter((c, index, self) => self.indexOf(c) === index)
+      .sort((a, b) => a - b);
+    return classes;
   }, [roster]);
 
-  // Auto-fill student name if found in roster
-  React.useEffect(() => {
-    if (selectedClass > 0 && selectedNum > 0) {
-      const match = roster.find(
-        r => Number(r.classNum) === Number(selectedClass) && Number(r.studentNum) === Number(selectedNum)
-      );
-      if (match) {
-        setNameInput(match.name);
-      }
-    }
-  }, [selectedClass, selectedNum, roster]);
-
-  // Extract available numbers for selected class
-  const availableNumbers = useMemo(() => {
-    if (selectedClass === 0) return [];
-    const filtered = roster.filter(r => Number(r.classNum) === selectedClass);
-    if (filtered.length > 0) {
-      return filtered.map(r => Number(r.studentNum)).sort((a: number, b: number) => a - b);
-    }
-    return Array.from({ length: 35 }, (_, i) => i + 1);
+  // Extract available student numbers for selected class strictly based on registered roster
+  const availableNumbers = useMemo<number[]>(() => {
+    if (selectedClass === 0 || !roster || roster.length === 0) return [];
+    const numbers = roster
+      .filter(r => Number(r.classNum) === selectedClass)
+      .map(r => Number(r.studentNum))
+      .filter((n): n is number => !isNaN(n) && n > 0)
+      .filter((n, index, self) => self.indexOf(n) === index)
+      .sort((a, b) => a - b);
+    return numbers;
   }, [roster, selectedClass]);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -59,30 +62,43 @@ export const StudentLogin: React.FC<Props> = ({ roster, isLoading = false, onLog
 
     const trimmedName = nameInput.trim();
     if (!trimmedName) {
-      setErrorMessage('이름을 입력해 주세요.');
+      setErrorMessage('이름을 직접 입력해 주세요.');
       return;
     }
 
-    // Find student in roster or create dynamic student item
-    let match = roster.find(
-      r => Number(r.classNum) === Number(selectedClass) &&
-           Number(r.studentNum) === Number(selectedNum) &&
-           r.name.trim() === trimmedName
+    // Check if there is a student registered in roster for this class and number
+    const registeredStudent = roster.find(
+      r => Number(r.classNum) === Number(selectedClass) && Number(r.studentNum) === Number(selectedNum)
     );
 
-    if (!match) {
-      // If roster is empty or student is not in roster, allow dynamic creation
-      const formattedNum = selectedNum < 10 ? `0${selectedNum}` : `${selectedNum}`;
-      match = {
-        id: `2-${selectedClass}-${formattedNum}`,
-        grade: 2,
-        classNum: Number(selectedClass),
-        studentNum: Number(selectedNum),
-        name: trimmedName,
-      };
+    if (registeredStudent) {
+      // Verify typed name against registered name (space-insensitive)
+      const normInput = trimmedName.replace(/\s+/g, '').toLowerCase();
+      const normRegistered = registeredStudent.name.replace(/\s+/g, '').toLowerCase();
+
+      if (normInput !== normRegistered) {
+        setErrorMessage(`입력하신 이름('${trimmedName}')이 ${selectedClass}반 ${selectedNum}번 명단에 등록된 이름과 일치하지 않습니다. 이름을 올바르게 입력해 주세요.`);
+        return;
+      }
+
+      onLogin({
+        ...registeredStudent,
+        name: trimmedName
+      });
+      return;
     }
 
-    onLogin(match);
+    // Fallback if roster is empty or student is not in roster
+    const formattedNum = selectedNum < 10 ? `0${selectedNum}` : `${selectedNum}`;
+    const dynamicStudent: StudentRosterItem = {
+      id: `2-${selectedClass}-${formattedNum}`,
+      grade: 2,
+      classNum: Number(selectedClass),
+      studentNum: Number(selectedNum),
+      name: trimmedName,
+    };
+
+    onLogin(dynamicStudent);
   };
 
   return (
@@ -94,7 +110,7 @@ export const StudentLogin: React.FC<Props> = ({ roster, isLoading = false, onLog
           </div>
           <h2 className="text-2xl font-bold text-slate-800 tracking-tight">학생 로그인</h2>
           <p className="text-sm text-slate-500">
-            반, 번호를 선택한 후 이름을 입력하고 수행평가를 시작하세요.
+            반과 번호를 선택한 후, 본인의 이름을 직접 입력하고 로그인하세요.
           </p>
         </div>
 
@@ -108,15 +124,19 @@ export const StudentLogin: React.FC<Props> = ({ roster, isLoading = false, onLog
               </label>
               <select
                 value={selectedClass}
-                disabled={isLoading}
+                disabled={isLoading || availableClasses.length === 0}
                 onChange={(e) => {
                   const c = Number(e.target.value);
                   setSelectedClass(c);
                   setSelectedNum(0); // Reset number selection on class change
                 }}
-                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all text-sm disabled:opacity-50"
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all text-sm disabled:opacity-60"
               >
-                <option value={0}>--반 선택--</option>
+                {roster.length === 0 ? (
+                  <option value={0}>등록된 학생 명단 없음</option>
+                ) : (
+                  <option value={0}>-- 반 선택 --</option>
+                )}
                 {availableClasses.map((c) => (
                   <option key={c} value={c}>
                     2학년 {c}반
@@ -134,10 +154,16 @@ export const StudentLogin: React.FC<Props> = ({ roster, isLoading = false, onLog
               <select
                 value={selectedNum}
                 onChange={(e) => setSelectedNum(Number(e.target.value))}
-                disabled={selectedClass === 0 || isLoading}
-                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all text-sm disabled:opacity-50 disabled:bg-slate-100"
+                disabled={selectedClass === 0 || availableNumbers.length === 0 || isLoading}
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all text-sm disabled:opacity-60 disabled:bg-slate-100"
               >
-                <option value={0}>--번호 선택--</option>
+                {selectedClass === 0 ? (
+                  <option value={0}>-- 반 선택 필요 --</option>
+                ) : availableNumbers.length === 0 ? (
+                  <option value={0}>해당 반 번호 없음</option>
+                ) : (
+                  <option value={0}>-- 번호 선택 --</option>
+                )}
                 {availableNumbers.map((n) => (
                   <option key={n} value={n}>
                     {n}번
