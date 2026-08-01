@@ -51,12 +51,24 @@ export function loadRoster(): StudentRosterItem[] {
       return [];
     }
     const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
     // If legacy sample data is detected (e.g. contains '강민준'), clear it
-    if (Array.isArray(parsed) && parsed.some((item: any) => item?.name === '강민준')) {
+    if (parsed.some((item: any) => item?.name === '강민준')) {
       localStorage.removeItem(ROSTER_KEY);
       return [];
     }
-    return parsed;
+    const seen = new Set<string>();
+    const unique: StudentRosterItem[] = [];
+    for (const item of parsed) {
+      if (!item) continue;
+      const formattedNum = item.studentNum < 10 ? `0${item.studentNum}` : `${item.studentNum}`;
+      const key = item.id || `${item.grade}-${item.classNum}-${formattedNum}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push({ ...item, id: key });
+      }
+    }
+    return unique;
   } catch (e) {
     console.error('Failed to load roster', e);
     return [];
@@ -157,11 +169,144 @@ export async function syncRosterToGAS(roster: StudentRosterItem[], gasUrlParam?:
   return false;
 }
 
+export function parseGasRosterRows(rows: any[]): StudentRosterItem[] {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+  const roster: StudentRosterItem[] = [];
+
+  // Check if rows is an array of objects
+  if (typeof rows[0] === 'object' && rows[0] !== null && !Array.isArray(rows[0])) {
+    for (const item of rows) {
+      if (!item) continue;
+      const name = String(item.name || item.studentName || item.성명 || item.이름 || '').trim();
+      if (name && name !== '이름' && name !== '성명') {
+        const grade = Number(item.grade || item.학년) || 2;
+        const classNum = Number(item.classNum || item.class || item.반) || 1;
+        const studentNum = Number(item.studentNum || item.number || item.num || item.번호) || 1;
+        const formattedNum = studentNum < 10 ? `0${studentNum}` : `${studentNum}`;
+        const id = String(item.id || `${grade}-${classNum}-${formattedNum}`);
+        roster.push({ id, grade, classNum, studentNum, name });
+      }
+    }
+    return roster;
+  }
+
+  // 2D Array parsing
+  const firstRow = Array.isArray(rows[0]) ? rows[0].map(cell => String(cell || '').trim()) : [];
+  
+  let idIdx = -1;
+  let gradeIdx = -1;
+  let classIdx = -1;
+  let numIdx = -1;
+  let nameIdx = -1;
+
+  firstRow.forEach((cell, idx) => {
+    const lower = cell.toLowerCase();
+    if (lower === 'id') idIdx = idx;
+    else if (lower.includes('학년')) gradeIdx = idx;
+    else if (lower.includes('반')) classIdx = idx;
+    else if (lower.includes('번호')) numIdx = idx;
+    else if (lower.includes('이름') || lower.includes('성명') || lower.includes('학생명')) nameIdx = idx;
+  });
+
+  const hasHeader = (nameIdx !== -1 || classIdx !== -1 || numIdx !== -1 || gradeIdx !== -1 || idIdx !== -1);
+  const startIdx = hasHeader ? 1 : 0;
+
+  for (let i = startIdx; i < rows.length; i++) {
+    const row = rows[i];
+    if (!Array.isArray(row) || row.length === 0) continue;
+
+    let grade = 2;
+    let classNum = 0;
+    let studentNum = 0;
+    let name = '';
+    let id = '';
+
+    if (hasHeader) {
+      if (idIdx !== -1) id = String(row[idIdx] || '').trim();
+      if (gradeIdx !== -1) grade = Number(row[gradeIdx]) || 2;
+      if (classIdx !== -1) classNum = Number(row[classIdx]) || 0;
+      if (numIdx !== -1) studentNum = Number(row[numIdx]) || 0;
+      if (nameIdx !== -1) name = String(row[nameIdx] || '').trim();
+    } else {
+      // Positional fallbacks based on row length
+      if (row.length >= 5) {
+        id = String(row[0] || '').trim();
+        grade = Number(row[1]) || 2;
+        classNum = Number(row[2]) || 0;
+        studentNum = Number(row[3]) || 0;
+        name = String(row[4] || '').trim();
+      } else if (row.length === 4) {
+        grade = Number(row[0]) || 2;
+        classNum = Number(row[1]) || 0;
+        studentNum = Number(row[2]) || 0;
+        name = String(row[3] || '').trim();
+      } else if (row.length === 3) {
+        grade = 2;
+        classNum = Number(row[0]) || 0;
+        studentNum = Number(row[1]) || 0;
+        name = String(row[2] || '').trim();
+      } else if (row.length === 2) {
+        const first = String(row[0] || '').trim();
+        name = String(row[1] || '').trim();
+        if (/^\d{4,5}$/.test(first)) {
+          if (first.length === 5) {
+            grade = Number(first[0]) || 2;
+            classNum = Number(first.slice(1, 3)) || 0;
+            studentNum = Number(first.slice(3, 5)) || 0;
+          } else {
+            grade = 2;
+            classNum = Number(first.slice(0, 2)) || 0;
+            studentNum = Number(first.slice(2, 4)) || 0;
+          }
+        }
+      }
+    }
+
+    if (name && name !== '이름' && name !== '성명' && !name.toLowerCase().includes('id') && classNum > 0 && studentNum > 0) {
+      const formattedNum = studentNum < 10 ? `0${studentNum}` : `${studentNum}`;
+      roster.push({
+        id: id || `${grade}-${classNum}-${formattedNum}`,
+        grade,
+        classNum,
+        studentNum,
+        name
+      });
+    }
+  }
+
+  const seenKeys = new Set<string>();
+  const uniqueRoster: StudentRosterItem[] = [];
+  for (const item of roster) {
+    const formattedNum = item.studentNum < 10 ? `0${item.studentNum}` : `${item.studentNum}`;
+    const key = item.id || `${item.grade}-${item.classNum}-${formattedNum}`;
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      uniqueRoster.push({ ...item, id: key });
+    }
+  }
+
+  return uniqueRoster;
+}
+
 export async function fetchRosterFromGAS(): Promise<StudentRosterItem[]> {
   const gasUrl = getGasUrl();
   const payload = {
     action: 'getRoster',
     gasUrl
+  };
+
+  const processResponse = (resData: any): StudentRosterItem[] | null => {
+    if (!resData) return null;
+    const rawRows = Array.isArray(resData) ? resData :
+                    Array.isArray(resData?.data) ? resData.data :
+                    Array.isArray(resData?.roster) ? resData.roster :
+                    Array.isArray(resData?.result) ? resData.result : null;
+    if (rawRows && Array.isArray(rawRows)) {
+      const roster = parseGasRosterRows(rawRows);
+      saveRoster(roster);
+      return roster;
+    }
+    return null;
   };
 
   // 1. Try backend proxy API (/api/sheet)
@@ -174,29 +319,44 @@ export async function fetchRosterFromGAS(): Promise<StudentRosterItem[]> {
 
     if (apiRes.ok) {
       const resData = await apiRes.json().catch(() => null);
-      if (resData && resData.status === 'success' && Array.isArray(resData.data)) {
-        const rows = resData.data;
-        const roster: StudentRosterItem[] = [];
-        const startIdx = rows.length > 0 && (String(rows[0][0]).toLowerCase().includes('id') || String(rows[0][1]).includes('학년')) ? 1 : 0;
-        for (let i = startIdx; i < rows.length; i++) {
-          const row = rows[i];
-          if (row && (row[4] || row[0])) {
-            const grade = Number(row[1]) || 2;
-            const classNum = Number(row[2]) || 1;
-            const studentNum = Number(row[3]) || 1;
-            const name = String(row[4] || '').trim();
-            const id = String(row[0] || `${grade}-${classNum}-${studentNum}`);
-            if (name) {
-              roster.push({ id, grade, classNum, studentNum, name });
-            }
-          }
-        }
-        saveRoster(roster);
-        return roster;
-      }
+      const roster = processResponse(resData);
+      if (roster) return roster;
     }
   } catch (e) {
-    console.warn('fetchRosterFromGAS warning:', e);
+    console.warn('Backend proxy fetchRosterFromGAS error:', e);
+  }
+
+  // 2. Direct GET request to gasUrl
+  if (gasUrl && gasUrl.startsWith('http')) {
+    try {
+      const getUrl = `${gasUrl}${gasUrl.includes('?') ? '&' : '?'}action=getRoster`;
+      const directRes = await fetch(getUrl);
+      if (directRes.ok) {
+        const resData = await directRes.json().catch(() => null);
+        const roster = processResponse(resData);
+        if (roster) return roster;
+      }
+    } catch (e) {
+      console.warn('Direct GET fetchRosterFromGAS error:', e);
+    }
+  }
+
+  // 3. Direct POST request to gasUrl
+  if (gasUrl && gasUrl.startsWith('http')) {
+    try {
+      const directPostRes = await fetch(gasUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload)
+      });
+      if (directPostRes.ok) {
+        const resData = await directPostRes.json().catch(() => null);
+        const roster = processResponse(resData);
+        if (roster) return roster;
+      }
+    } catch (e) {
+      console.warn('Direct POST fetchRosterFromGAS error:', e);
+    }
   }
 
   return loadRoster();
