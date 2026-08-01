@@ -344,12 +344,12 @@ export async function syncSubmissionToGAS(gasUrl: string, submission: StudentSub
     ...bodyData,
   };
 
-  // 2. Direct fetch fallback to GAS URL
+  // 2. Direct fetch fallback to GAS URL using text/plain (avoids CORS OPTIONS preflight check)
   try {
     const response = await fetch(gasUrl, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'text/plain;charset=utf-8',
       },
       body: JSON.stringify(payload)
     });
