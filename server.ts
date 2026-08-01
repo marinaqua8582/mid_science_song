@@ -3,6 +3,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { GAS_SCRIPT } from "./src/data/gasScript";
 
 dotenv.config();
 
@@ -115,6 +116,7 @@ async function startServer() {
 
   // Google Apps Script template code download/view endpoint
   app.get("/api/gas-code", (_req, res) => {
+    return res.type("text/plain").send(GAS_SCRIPT);
     const gasCode = `/**
  * Google Apps Script Web App Code for Science Song Evaluation
  * 구글 시트에 이 코드를 붙여넣고 [웹 앱으로 배포] (액세스 권한: 모든 사용자) 하세요.
@@ -317,25 +319,35 @@ function doPost(e) {
 
       const action = bodyData.action || "saveSubmission";
 
-      // For getRoster, perform GET request to gasUrl first
-      if (action === "getRoster") {
+      const readActions = new Set([
+        "ping", "getRoster", "getSubmissions", "getData", "getStudentData", "getSubmission"
+      ]);
+
+      // Read operations always use GET so opening a dashboard can never create a sheet row.
+      if (readActions.has(String(action))) {
         try {
-          const getUrl = `${gasUrl}${gasUrl.includes("?") ? "&" : "?"}action=getRoster`;
+          const getUrl = new URL(String(gasUrl));
+          Object.entries(bodyData).forEach(([key, value]) => {
+            if (key === "gasUrl" || value === undefined || value === null || typeof value === "object") return;
+            getUrl.searchParams.set(key, String(value));
+          });
+          getUrl.searchParams.set("action", String(action));
           const getResponse = await fetch(getUrl, { method: "GET" });
           if (getResponse.ok) {
             const text = await getResponse.text();
-            let resData;
             try {
-              resData = JSON.parse(text);
+              return res.json(JSON.parse(text));
             } catch {
-              resData = { status: "success", raw: text };
-            }
-            if (resData && (resData.status === "success" || Array.isArray(resData.data) || Array.isArray(resData))) {
-              return res.json(resData);
+              return res.status(502).json({
+                status: "error",
+                message: "Google Apps Script가 JSON 형식으로 응답하지 않았습니다. 새 Apps Script 버전을 배포해 주세요."
+              });
             }
           }
+          return res.status(502).json({ status: "error", message: "Google Apps Script 조회에 실패했습니다." });
         } catch (getErr) {
-          console.warn("GAS getRoster GET fallback attempt:", getErr);
+          console.warn("GAS read request failed:", getErr);
+          return res.status(502).json({ status: "error", message: "Google Apps Script 조회에 실패했습니다." });
         }
       }
 

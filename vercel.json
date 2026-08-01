@@ -11,6 +11,10 @@
       "destination": "/api/gas-code"
     },
     {
+      "source": "/api/sheet",
+      "destination": "/api/sheet"
+    },
+    {
       "source": "/api/health",
       "destination": "/api/health"
     },
