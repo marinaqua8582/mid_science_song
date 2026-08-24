@@ -11,7 +11,7 @@
 @media print {
   @page {
     size: A4 portrait;
-    margin: 10mm;
+    margin: 8mm;
   }
 
   body {
@@ -49,13 +49,12 @@
     padding: 0 !important;
     box-shadow: none !important;
     border: none !important;
+    line-height: 1.35 !important;
   }
 
-  /* Disable all max-height and scrolling for printed output */
+  /* Keep long lyrics visible without preserving layout whitespace on every div. */
   .printable-report pre,
-  .printable-report code,
-  .printable-report div,
-  .printable-report table {
+  .printable-report code {
     max-height: none !important;
     height: auto !important;
     overflow: visible !important;
@@ -63,10 +62,55 @@
     word-break: break-word !important;
   }
 
+  .printable-report table {
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .printable-report p,
+  .printable-report span,
+  .printable-report td {
+    overflow-wrap: anywhere;
+  }
+
+  .printable-report .print-report-content {
+    row-gap: 0 !important;
+  }
+
+  .printable-report .print-report-content > :not(:last-child) {
+    margin-block-start: 0 !important;
+    margin-block-end: 10px !important;
+  }
+
+  /* Lyrics may continue on the next page instead of moving as one large block. */
+  .printable-report .lyrics-comparison,
+  .printable-report .lyrics-panel {
+    break-inside: auto !important;
+    page-break-inside: auto !important;
+  }
+
+  /* Keep both lyric columns aligned while allowing the row to fragment. */
+  .printable-report .lyrics-comparison {
+    column-gap: 8px !important;
+  }
+
+  .printable-report .print-signature {
+    margin-top: 8px !important;
+    padding-top: 6px !important;
+  }
+
   /* Avoid awkward page breaks */
   .printable-report .no-break {
     break-inside: avoid;
     page-break-inside: avoid;
   }
-}
 
+  .printable-report tr,
+  .printable-report h1,
+  .printable-report h2,
+  .printable-report h3 {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}
