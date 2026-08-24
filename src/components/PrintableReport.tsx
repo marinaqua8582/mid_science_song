@@ -30,7 +30,7 @@ export const PrintableReport: React.FC<Props> = ({ submission, rubrics }) => {
         </div>
       </div>
 
-      <div className="space-y-4 text-xs">
+      <div className="print-report-content space-y-4 text-xs">
         {/* Step 1 Section */}
         <div className="border border-slate-300 rounded p-3 bg-slate-50/50 no-break">
           <h2 className="font-bold text-xs text-slate-900 border-b border-slate-200 pb-1 mb-1.5 flex justify-between">
@@ -65,9 +65,9 @@ export const PrintableReport: React.FC<Props> = ({ submission, rubrics }) => {
         )}
 
         {/* Step 2 & 3 Side by Side Lyrics Comparison */}
-        <div className="grid grid-cols-2 gap-3 no-break">
+        <div className="lyrics-comparison grid grid-cols-2 gap-3">
           {/* AI Original */}
-          <div className="border border-slate-300 rounded p-3">
+          <div className="lyrics-panel border border-slate-300 rounded p-3">
             <h3 className="font-bold text-slate-900 border-b border-slate-200 pb-1 mb-1.5 text-xs">
               [2단계] Gemini AI 생성 원본 가사 ({step2?.genre || '장르'})
             </h3>
@@ -77,7 +77,7 @@ export const PrintableReport: React.FC<Props> = ({ submission, rubrics }) => {
           </div>
 
           {/* Student Edited with Underlined Diff */}
-          <div className="border border-slate-300 rounded p-3 bg-teal-50/20">
+          <div className="lyrics-panel border border-slate-300 rounded p-3 bg-teal-50/20">
             <h3 className="font-bold text-teal-950 border-b border-teal-200 pb-1 mb-1.5 text-xs flex justify-between">
               <span>[3단계] 학생 자가 수정 가사</span>
               <span className="text-[10px] text-amber-800 font-bold">
@@ -154,10 +154,9 @@ export const PrintableReport: React.FC<Props> = ({ submission, rubrics }) => {
       </div>
 
       {/* Signature Footer */}
-      <div className="mt-6 pt-3 border-t border-slate-300 flex justify-end text-[11px] font-semibold text-slate-700 no-break">
+      <div className="print-signature mt-6 pt-3 border-t border-slate-300 flex justify-end text-[11px] font-semibold text-slate-700 no-break">
         <div>학생 확인:_____________________</div>
       </div>
     </div>
   );
 };
-
