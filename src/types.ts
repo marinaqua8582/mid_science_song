@@ -19,6 +19,7 @@ export interface StudentRosterItem {
   classNum: number; // e.g., 1
   studentNum: number; // e.g., 5
   name: string;
+  googleId?: string; // 명단 업로드/시트 저장용. 학생 화면에서는 본인 조회 시에만 사용
 }
 
 export interface Step1Data {

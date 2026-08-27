@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { StudentSubmission, StudentRosterItem, AppSettings, RubricCriterion } from '../types';
 import {
   saveRoster, saveSettings, saveSubmissions, updateSingleSubmission, syncRosterToGAS,
-  fetchRosterFromGAS, fetchAllSubmissionsFromGAS, getGasUrl
+  mutateRosterStudentInGAS, fetchRosterFromGAS, fetchAllSubmissionsFromGAS, getGasUrl
 } from '../utils/storage';
 import { GAS_SCRIPT } from '../data/gasScript';
 import { PrintableReport } from './PrintableReport';
@@ -229,11 +229,11 @@ export const TeacherDashboard: React.FC<Props> = ({
   // Download Excel Sample Roster
   const handleDownloadSampleExcel = () => {
     const sampleData = [
-      { 학년: 2, 반: 1, 번호: 1, 이름: '강민준' },
-      { 학년: 2, 반: 1, 번호: 2, 이름: '김서연' },
-      { 학년: 2, 반: 1, 번호: 3, 이름: '박도현' },
-      { 학년: 2, 반: 2, 번호: 1, 이름: '권우진' },
-      { 학년: 2, 반: 2, 번호: 2, 이름: '김나은' }
+      { 학년: 2, 반: 1, 번호: 1, 이름: '강민준', '구글 아이디': 'student01@school.example' },
+      { 학년: 2, 반: 1, 번호: 2, 이름: '김서연', '구글 아이디': 'student02@school.example' },
+      { 학년: 2, 반: 1, 번호: 3, 이름: '박도현', '구글 아이디': 'student03@school.example' },
+      { 학년: 2, 반: 2, 번호: 1, 이름: '권우진', '구글 아이디': 'student04@school.example' },
+      { 학년: 2, 반: 2, 번호: 2, 이름: '김나은', '구글 아이디': 'student05@school.example' }
     ];
 
     const worksheet = XLSX.utils.json_to_sheet(sampleData);
@@ -261,12 +261,14 @@ export const TeacherDashboard: React.FC<Props> = ({
           const c = Number(row['반'] || 1);
           const n = Number(row['번호'] || (idx + 1));
           const nameStr = String(row['이름'] || '').trim();
+          const googleId = String(row['구글 아이디'] || row['구글아이디'] || row['Google ID'] || row['googleId'] || '').trim();
           return {
             id: `${g}-${c}-${n < 10 ? '0' + n : n}`,
             grade: g,
             classNum: c,
             studentNum: n,
-            name: nameStr
+            name: nameStr,
+            googleId
           };
         }).filter(item => item.name.length > 0);
 
@@ -275,14 +277,25 @@ export const TeacherDashboard: React.FC<Props> = ({
           return;
         }
 
-        saveRoster(newRosterItems);
-        onUpdateRoster(newRosterItems);
-
         setIsSyncingRoster(true);
-        await syncRosterToGAS(newRosterItems);
+        const synced = await syncRosterToGAS(newRosterItems);
         setIsSyncingRoster(false);
 
-        alert(`총 ${newRosterItems.length}명의 학생 명단이 새로 등록 및 구글 시트에 동기화되었습니다!`);
+        const publicRoster = newRosterItems.map(item => ({
+          id: item.id,
+          grade: item.grade,
+          classNum: item.classNum,
+          studentNum: item.studentNum,
+          name: item.name
+        }));
+        saveRoster(publicRoster);
+        onUpdateRoster(publicRoster);
+
+        if (synced) {
+          alert(`총 ${newRosterItems.length}명의 학생 명단과 구글 아이디가 구글 시트에 등록되었습니다!`);
+        } else {
+          alert('학생 명단은 앱에 등록되었지만 구글 시트 동기화를 확인하지 못했습니다. Apps Script 배포 상태를 확인해 주세요.');
+        }
       } catch (err) {
         console.error('Excel upload error:', err);
         alert('엑셀 파일 분석 중 오류가 발생했습니다. 양식을 확인해주세요.');
@@ -332,25 +345,33 @@ export const TeacherDashboard: React.FC<Props> = ({
     onUpdateRoster(updatedRoster);
 
     setIsSyncingRoster(true);
-    await syncRosterToGAS(updatedRoster);
+    const synced = await mutateRosterStudentInGAS('upsertRosterStudent', newStudent);
     setIsSyncingRoster(false);
 
     setSingleName('');
     setSingleNum(prev => prev + 1);
-    alert(`${singleGrade}학년 ${singleClass}반 ${singleNum}번 '${trimmedName}' 학생이 성공적으로 추가되었습니다.`);
+    alert(synced
+      ? `${singleGrade}학년 ${singleClass}반 ${singleNum}번 '${trimmedName}' 학생이 성공적으로 추가되었습니다.`
+      : '학생은 앱에 추가되었지만 구글 시트 동기화를 확인하지 못했습니다. Apps Script 배포 상태를 확인해 주세요.');
   };
 
   // Delete single student
   const handleDeleteStudent = async (studentId: string, studentName: string) => {
     if (!confirm(`'${studentName}' 학생을 명단에서 삭제하시겠습니까?`)) return;
 
+    const studentToDelete = roster.find(s => s.id === studentId);
+    if (!studentToDelete) return;
     const updatedRoster = roster.filter(s => s.id !== studentId);
     saveRoster(updatedRoster);
     onUpdateRoster(updatedRoster);
 
     setIsSyncingRoster(true);
-    await syncRosterToGAS(updatedRoster);
+    const synced = await mutateRosterStudentInGAS('deleteRosterStudent', studentToDelete);
     setIsSyncingRoster(false);
+
+    if (!synced) {
+      alert('학생은 앱 명단에서 삭제되었지만 구글 시트 동기화를 확인하지 못했습니다. Apps Script 배포 상태를 확인해 주세요.');
+    }
   };
 
   // Clear entire roster
@@ -1073,6 +1094,10 @@ function doPost(e) {
                 </button>
               </div>
             </form>
+          </div>
+
+          <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 leading-relaxed">
+            구글 아이디는 엑셀 명단의 <strong>구글 아이디</strong> 열에서만 등록하며, 학생 본인의 4단계 Suno AI 안내 화면에만 표시됩니다. 현재 명단 표와 제출물·인쇄물에는 표시되지 않습니다.
           </div>
 
           {/* Registered Roster Table */}

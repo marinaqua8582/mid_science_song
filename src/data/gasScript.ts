@@ -57,8 +57,17 @@ function doPost(e) {
     if (action === 'getStudentData' || action === 'getSubmission') {
       return responseJSON(findStudentResponse_(contents.data || contents));
     }
+    if (action === 'getStudentGoogleId') {
+      return responseJSON(findStudentGoogleIdResponse_(contents.data || contents));
+    }
     if (action === 'saveRoster') {
       return responseJSON(saveRoster_(contents.roster));
+    }
+    if (action === 'upsertRosterStudent') {
+      return responseJSON(upsertRosterStudent_(contents.student || contents.data || contents));
+    }
+    if (action === 'deleteRosterStudent') {
+      return responseJSON(deleteRosterStudent_(contents.student || contents.data || contents));
     }
     if (action === 'saveSubmission' || action === 'saveStudentData') {
       return responseJSON(saveSubmission_(contents.data || contents));
@@ -78,7 +87,9 @@ function responseJSON(obj) {
 function getRosterRows_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(ROSTER_SHEET_NAME);
-  return sheet ? sheet.getDataRange().getValues() : [];
+  if (!sheet) return [];
+  var rows = sheet.getDataRange().getValues();
+  return rows.map(function(row) { return row.slice(0, 5); });
 }
 
 function saveRoster_(roster) {
@@ -92,7 +103,7 @@ function saveRoster_(roster) {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName(ROSTER_SHEET_NAME) || ss.insertSheet(ROSTER_SHEET_NAME);
     sheet.clearContents();
-    sheet.getRange(1, 1, 1, 5).setValues([['ID', '학년', '반', '번호', '이름']]);
+    sheet.getRange(1, 1, 1, 6).setValues([['ID', '학년', '반', '번호', '이름', '구글 아이디']]);
 
     var rows = [];
     for (var i = 0; i < roster.length; i++) {
@@ -104,14 +115,110 @@ function saveRoster_(roster) {
         Number(item.grade) || 2,
         Number(item.classNum) || '',
         Number(item.studentNum) || '',
-        name
+        name,
+        String(item.googleId || '').trim()
       ]);
     }
-    if (rows.length) sheet.getRange(2, 1, rows.length, 5).setValues(rows);
+    if (rows.length) sheet.getRange(2, 1, rows.length, 6).setValues(rows);
     return { status: 'success', count: rows.length };
   } finally {
     lock.releaseLock();
   }
+}
+
+function findStudentGoogleIdResponse_(query) {
+  query = query || {};
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(ROSTER_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return { status: 'success', found: false };
+
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), 6)).getValues();
+  var targetGrade = Number(query.grade) || 2;
+  var targetClass = Number(query.classNum);
+  var targetNum = Number(query.studentNum);
+  var targetName = normalizeName_(query.name);
+
+  for (var i = 0; i < rows.length; i++) {
+    if (Number(rows[i][1]) === targetGrade && Number(rows[i][2]) === targetClass &&
+        Number(rows[i][3]) === targetNum && normalizeName_(rows[i][4]) === targetName) {
+      var googleId = String(rows[i][5] || '').trim();
+      return { status: 'success', found: googleId !== '', googleId: googleId };
+    }
+  }
+  return { status: 'success', found: false };
+}
+
+function upsertRosterStudent_(student) {
+  student = student || {};
+  var name = String(student.name || '').trim();
+  if (!Number(student.classNum) || !Number(student.studentNum) || !name) {
+    return { status: 'error', message: '반, 번호, 이름이 모두 있어야 합니다.' };
+  }
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(ROSTER_SHEET_NAME) || ss.insertSheet(ROSTER_SHEET_NAME);
+    if (sheet.getLastRow() === 0) {
+      sheet.getRange(1, 1, 1, 6).setValues([['ID', '학년', '반', '번호', '이름', '구글 아이디']]);
+    }
+
+    var rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).getValues();
+    var targetRow = -1;
+    for (var i = 0; i < rows.length; i++) {
+      if (Number(rows[i][1]) === Number(student.grade || 2) &&
+          Number(rows[i][2]) === Number(student.classNum) &&
+          Number(rows[i][3]) === Number(student.studentNum)) {
+        targetRow = i + 2;
+        break;
+      }
+    }
+
+    var id = student.id || makeSubmissionId_(student.grade, student.classNum, student.studentNum).replace(/^sub-/, '');
+    if (targetRow > 0) {
+      sheet.getRange(targetRow, 1, 1, 5).setValues([[
+        id, Number(student.grade) || 2, Number(student.classNum), Number(student.studentNum), name
+      ]]);
+      if (student.googleId) sheet.getRange(targetRow, 6).setValue(String(student.googleId).trim());
+    } else {
+      sheet.appendRow([
+        id, Number(student.grade) || 2, Number(student.classNum), Number(student.studentNum),
+        name, String(student.googleId || '').trim()
+      ]);
+      targetRow = sheet.getLastRow();
+    }
+    return { status: 'success', row: targetRow };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function deleteRosterStudent_(student) {
+  student = student || {};
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(ROSTER_SHEET_NAME);
+    if (!sheet || sheet.getLastRow() < 2) return { status: 'success', deleted: false };
+    var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 5).getValues();
+    for (var i = rows.length - 1; i >= 0; i--) {
+      if (Number(rows[i][1]) === Number(student.grade || 2) &&
+          Number(rows[i][2]) === Number(student.classNum) &&
+          Number(rows[i][3]) === Number(student.studentNum)) {
+        sheet.deleteRow(i + 2);
+        return { status: 'success', deleted: true };
+      }
+    }
+    return { status: 'success', deleted: false };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function normalizeName_(value) {
+  return String(value || '').replace(/\s+/g, '').toLowerCase();
 }
 
 function getSubmissionSheet_() {
