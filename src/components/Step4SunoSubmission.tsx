@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Step1Data, Step2Data, Step3Data, Step4Data, StudentRosterItem } from '../types';
-import { Music2, ExternalLink, Copy, Check, Send, ArrowLeft, CheckCircle2, FileText, Clock } from 'lucide-react';
+import { fetchStudentGoogleIdFromGAS } from '../utils/storage';
+import { Music2, ExternalLink, Copy, Check, Send, ArrowLeft, CheckCircle2, FileText, Clock, Mail, Loader2, AlertCircle } from 'lucide-react';
 
 interface Props {
   student: StudentRosterItem;
@@ -26,6 +27,29 @@ export const Step4SunoSubmission: React.FC<Props> = ({
   const [sunoUrl, setSunoUrl] = useState<string>(initialData?.sunoUrl || '');
   const [copiedPrompt, setCopiedPrompt] = useState<boolean>(false);
   const [copiedLyrics, setCopiedLyrics] = useState<boolean>(false);
+  const [googleId, setGoogleId] = useState<string | null>(null);
+  const [isLoadingGoogleId, setIsLoadingGoogleId] = useState<boolean>(true);
+  const [copiedGoogleId, setCopiedGoogleId] = useState<boolean>(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    setIsLoadingGoogleId(true);
+
+    fetchStudentGoogleIdFromGAS(student)
+      .then((id) => {
+        if (isMounted) setGoogleId(id);
+      })
+      .catch(() => {
+        if (isMounted) setGoogleId(null);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingGoogleId(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [student.grade, student.classNum, student.studentNum, student.name]);
 
   const handleCopyPromptStyle = () => {
     const text = `${step2Data.genre}, middle school science song, upbeat, clear vocals, ${step2Data.situationPrompt}`;
@@ -38,6 +62,13 @@ export const Step4SunoSubmission: React.FC<Props> = ({
     navigator.clipboard.writeText(step3Data.editedLyrics);
     setCopiedLyrics(true);
     setTimeout(() => setCopiedLyrics(false), 2000);
+  };
+
+  const handleCopyGoogleId = () => {
+    if (!googleId) return;
+    navigator.clipboard.writeText(googleId);
+    setCopiedGoogleId(true);
+    setTimeout(() => setCopiedGoogleId(false), 2000);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -119,6 +150,43 @@ export const Step4SunoSubmission: React.FC<Props> = ({
             >
               Suno AI 바로가기 <ExternalLink className="w-3.5 h-3.5" />
             </a>
+          </div>
+
+          <div className="p-4 bg-white border border-rose-200 rounded-xl space-y-2">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+              <Mail className="w-4 h-4 text-rose-600" />
+              Suno AI 로그인에 사용할 나의 구글 아이디
+            </div>
+
+            {isLoadingGoogleId ? (
+              <div className="flex items-center gap-2 text-xs text-slate-500 py-1">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                등록된 구글 아이디를 확인하는 중입니다.
+              </div>
+            ) : googleId ? (
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <div className="flex-1 px-3 py-2.5 bg-rose-50 border border-rose-100 rounded-lg font-mono text-sm font-bold text-rose-950 break-all">
+                  {googleId}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCopyGoogleId}
+                  className="px-3 py-2.5 bg-rose-100 hover:bg-rose-200 text-rose-800 text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition-all"
+                >
+                  {copiedGoogleId ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedGoogleId ? '복사됨' : '아이디 복사'}
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>명단에 등록된 구글 아이디가 없습니다. 선생님께 확인해 주세요.</span>
+              </div>
+            )}
+
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              다른 구글 계정이 로그인되어 있다면 계정을 전환한 뒤, 위 아이디로 Suno AI에 로그인하세요. 이 아이디는 현재 로그인한 학생 본인에게만 안내됩니다.
+            </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
@@ -210,4 +278,3 @@ export const Step4SunoSubmission: React.FC<Props> = ({
     </div>
   );
 };
-

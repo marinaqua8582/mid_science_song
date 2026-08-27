@@ -73,7 +73,13 @@ export function loadRoster(): StudentRosterItem[] {
       const key = canonicalRosterId(item);
       if (!seen.has(key)) {
         seen.add(key);
-        unique.push({ ...item, id: key });
+        unique.push({
+          id: key,
+          grade: Number(item.grade),
+          classNum: Number(item.classNum),
+          studentNum: Number(item.studentNum),
+          name: String(item.name || '')
+        });
       }
     }
     return unique;
@@ -275,6 +281,47 @@ export async function syncRosterToGAS(roster: StudentRosterItem[], gasUrlParam?:
   return false;
 }
 
+export async function mutateRosterStudentInGAS(
+  action: 'upsertRosterStudent' | 'deleteRosterStudent',
+  student: StudentRosterItem,
+  gasUrlParam?: string
+): Promise<boolean> {
+  const targetGasUrl = gasUrlParam || getGasUrl();
+  const payload = { action, student, gasUrl: targetGasUrl };
+
+  try {
+    const apiRes = await fetch('/api/sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (apiRes.ok) {
+      const data = await apiRes.json().catch(() => null);
+      if (data?.status === 'success') return true;
+    }
+  } catch (e) {
+    console.warn('API route roster mutation warning:', e);
+  }
+
+  if (targetGasUrl && targetGasUrl.startsWith('http')) {
+    try {
+      const res = await fetch(targetGasUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        return data?.status === 'success';
+      }
+    } catch (e) {
+      console.warn('Direct GAS roster mutation warning:', e);
+    }
+  }
+
+  return false;
+}
+
 export function parseGasRosterRows(rows: any[]): StudentRosterItem[] {
   if (!Array.isArray(rows) || rows.length === 0) return [];
   const roster: StudentRosterItem[] = [];
@@ -447,6 +494,59 @@ export async function fetchRosterFromGAS(): Promise<StudentRosterItem[]> {
   }
 
   return loadRoster();
+}
+
+export async function fetchStudentGoogleIdFromGAS(
+  student: Pick<StudentRosterItem, 'grade' | 'classNum' | 'studentNum' | 'name'>
+): Promise<string | null> {
+  const gasUrl = getGasUrl();
+  const payload = {
+    action: 'getStudentGoogleId',
+    grade: student.grade,
+    classNum: student.classNum,
+    studentNum: student.studentNum,
+    name: student.name,
+    gasUrl
+  };
+
+  const readGoogleId = (data: any): string | null => {
+    if (!data || data.status !== 'success' || !data.found) return null;
+    const googleId = String(data.googleId || data.data?.googleId || '').trim();
+    return googleId || null;
+  };
+
+  try {
+    const apiRes = await fetch('/api/sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (apiRes.ok) {
+      const googleId = readGoogleId(await apiRes.json().catch(() => null));
+      if (googleId) return googleId;
+    }
+  } catch (e) {
+    console.warn('Backend proxy fetch student Google ID error:', e);
+  }
+
+  if (gasUrl && gasUrl.startsWith('http')) {
+    try {
+      const directRes = await fetch(gasUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload)
+      });
+
+      if (directRes.ok) {
+        return readGoogleId(await directRes.json().catch(() => null));
+      }
+    } catch (e) {
+      console.warn('Direct GAS fetch student Google ID error:', e);
+    }
+  }
+
+  return null;
 }
 
 export interface FormSubmissionPayload {
