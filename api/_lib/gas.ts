@@ -1,4 +1,5 @@
-const REQUEST_TIMEOUT_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 25_000;
+const MAX_REDIRECTS = 3;
 
 export class GasRequestError extends Error {
   status: number;
@@ -31,6 +32,42 @@ function isAllowedGasUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isAllowedGasResponseUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' &&
+      (url.hostname === 'script.google.com' || url.hostname === 'script.googleusercontent.com');
+  } catch {
+    return false;
+  }
+}
+
+async function fetchGasResponse(
+  input: string | URL,
+  init: RequestInit,
+): Promise<Response> {
+  let url = String(input);
+  let requestInit: RequestInit = { ...init, redirect: 'manual' };
+
+  for (let index = 0; index <= MAX_REDIRECTS; index += 1) {
+    const response = await fetch(url, requestInit);
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+
+    const location = response.headers.get('location');
+    if (!location) throw new GasRequestError('Google Apps Script 응답 주소를 확인할 수 없습니다.');
+    const nextUrl = new URL(location, url).toString();
+    if (!isAllowedGasResponseUrl(nextUrl)) {
+      throw new GasRequestError('Google Apps Script가 허용되지 않은 주소로 응답했습니다.');
+    }
+    url = nextUrl;
+
+    if (response.status === 303 || ((response.status === 301 || response.status === 302) && requestInit.method === 'POST')) {
+      requestInit = { method: 'GET', signal: init.signal, redirect: 'manual' };
+    }
+  }
+  throw new GasRequestError('Google Apps Script 응답 이동 횟수를 초과했습니다.');
 }
 
 export function gasConfigurationStatus(): { configured: boolean; missing: string[] } {
@@ -66,9 +103,9 @@ export async function requestGas(
         if (value === undefined || value === null || typeof value === 'object') return;
         url.searchParams.set(key, String(value));
       });
-      response = await fetch(url, { method: 'GET', signal: controller.signal });
+      response = await fetchGasResponse(url, { method: 'GET', signal: controller.signal });
     } else {
-      response = await fetch(gasUrl, {
+      response = await fetchGasResponse(gasUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({ ...payload, action, secret }),
