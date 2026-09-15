@@ -12,6 +12,7 @@ export default async function handler(req: any, res: any) {
     const { settings } = await readSettings();
     return res.status(200).json({ status: 'success', access: evaluateStudentAccess(settings) });
   } catch (error: any) {
+    console.error('Public settings error:', error?.name || 'Error', error?.message || 'Unknown error');
     const status = error instanceof GasRequestError ? error.status : 500;
     return res.status(status).json({
       status: 'error',
