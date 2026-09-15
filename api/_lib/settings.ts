@@ -64,7 +64,7 @@ export async function readSettings(force = false): Promise<{ settings: AppSettin
     return { settings: cached.settings, initialized: cached.initialized };
   }
 
-  const response = await requestGas('getSettings', { method: 'POST' });
+  const response = await requestGas('getSettings', { method: 'GET' });
   const initialized = response?.found === true && response?.settings && typeof response.settings === 'object';
   const settings = normalizeSettings(initialized ? response.settings : DEFAULT_APP_SETTINGS);
   cached = { settings, initialized, expiresAt: Date.now() + 15_000 };

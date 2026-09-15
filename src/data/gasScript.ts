@@ -33,6 +33,9 @@ function doGet(e) {
     if (action === 'getPublicRoster') {
       return responseJSON({ status: 'success', data: getPublicRoster_() });
     }
+    if (action === 'verifyStudent') {
+      return responseJSON(verifyStudentResponse_(params));
+    }
     if (action === 'getRoster') {
       return responseJSON({ status: 'success', data: getRosterRows_() });
     }
@@ -44,6 +47,9 @@ function doGet(e) {
     }
     if (action === 'getStudentData' || action === 'getSubmission') {
       return responseJSON(findStudentResponse_(params));
+    }
+    if (action === 'getStudentGoogleId') {
+      return responseJSON(findStudentGoogleIdResponse_(params));
     }
 
     return responseJSON({ status: 'error', message: 'Invalid read action' });

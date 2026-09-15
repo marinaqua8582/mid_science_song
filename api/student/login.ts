@@ -41,7 +41,7 @@ export default async function handler(req: any, res: any) {
     }
 
     const result = await requestGas('verifyStudent', {
-      method: 'POST',
+      method: 'GET',
       payload: { grade, classNum, studentNum, name },
     });
     const verified = result?.student;
