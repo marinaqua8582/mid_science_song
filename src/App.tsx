@@ -68,15 +68,6 @@ export default function App() {
     setRoster(loadedRoster);
     setSubmissions(loadedSubs);
 
-    // 학생 화면에는 이름과 Google ID를 제외한 공개 명단(학급/번호)만 불러옵니다.
-    fetchRosterFromGAS().then((gasRoster) => {
-      if (Array.isArray(gasRoster)) {
-        setRoster(gasRoster);
-      }
-    }).catch((err) => {
-      console.warn('Initial roster fetch from GAS:', err);
-    });
-
     const refreshAccess = () => {
       fetchStudentAccessStatus()
         .then((status) => {
@@ -92,6 +83,16 @@ export default function App() {
     const timer = window.setInterval(refreshAccess, 60_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  // Ignore a late public-roster response after switching to the teacher view.
+  useEffect(() => {
+    if (appMode !== 'student') return;
+    let active = true;
+    fetchRosterFromGAS().then((gasRoster) => {
+      if (active && Array.isArray(gasRoster)) setRoster(gasRoster);
+    }).catch((error) => console.warn('Public roster fetch:', error));
+    return () => { active = false; };
+  }, [appMode]);
 
   useEffect(() => {
     if (studentAccess && !studentAccess.isOpen && currentStudent) {
