@@ -54,6 +54,24 @@ export async function requestGas(
   action: string,
   options: { method?: 'GET' | 'POST'; payload?: Record<string, any> } = {},
 ): Promise<any> {
+  // Only reads can be repeated safely after a missing/expired response.
+  // A failed write response does not prove that Sheets was left unchanged.
+  const attempts = options.method === 'GET' ? 3 : 1;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await requestGasOnce(action, options);
+    } catch (error) {
+      if (!(error instanceof GasRequestError) || error.status < 502 || attempt === attempts - 1) {
+        throw error;
+      }
+    }
+  }
+}
+
+async function requestGasOnce(
+  action: string,
+  options: { method?: 'GET' | 'POST'; payload?: Record<string, any> },
+): Promise<any> {
   const gasUrl = getGasUrl();
   const secret = getGasSecret();
   const status = gasConfigurationStatus();
