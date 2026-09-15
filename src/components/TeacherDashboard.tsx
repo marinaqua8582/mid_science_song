@@ -40,6 +40,7 @@ export const TeacherDashboard: React.FC<Props> = ({
   const [pinInput, setPinInput] = useState<string>('');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [pinError, setPinError] = useState<string>('');
+  const [dashboardError, setDashboardError] = useState<string>('');
   const [isCheckingSession, setIsCheckingSession] = useState<boolean>(true);
   const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
 
@@ -85,6 +86,8 @@ export const TeacherDashboard: React.FC<Props> = ({
   const [copiedGas, setCopiedGas] = useState<boolean>(false);
 
   const loadProtectedDashboardData = async () => {
+    setDashboardError('');
+    try {
     const settingsResult = await fetchAdminSettings();
     const serverSettings = settingsResult.initialized
       ? settingsResult.settings
@@ -97,6 +100,10 @@ export const TeacherDashboard: React.FC<Props> = ({
     ]);
     onUpdateRoster(fetchedRoster);
     onUpdateSubmissions(fetchedSubmissions);
+    } catch (error: any) {
+      setDashboardError(error?.message || '교사 자료를 불러오지 못했습니다.');
+      throw error;
+    }
   };
 
   useEffect(() => {
@@ -185,7 +192,7 @@ export const TeacherDashboard: React.FC<Props> = ({
       await loginAdmin(pinInput);
       setIsAuthenticated(true);
       setPinInput('');
-      await loadProtectedDashboardData();
+      await loadProtectedDashboardData().catch(() => undefined);
     } catch (error: any) {
       setIsAuthenticated(false);
       setPinError(error?.message || '교사 로그인에 실패했습니다.');
@@ -693,6 +700,20 @@ function doPost(e) {
             {isAuthenticating ? '보안 인증 중...' : '대시보드 접속하기'}
           </button>
         </form>
+      </div>
+    );
+  }
+
+  if (dashboardError) {
+    return (
+      <div role="alert" className="bg-white border border-red-200 rounded-xl p-6 space-y-4">
+        <h2 className="font-bold text-lg">교사 자료를 불러오지 못했습니다.</h2>
+        <p>로그인은 유지됩니다. 조회 실패로 현재 제출 현황을 확인할 수 없습니다.</p>
+        <p className="text-sm text-red-700">{dashboardError}</p>
+        <button className="px-4 py-2 bg-blue-600 text-white rounded-lg"
+          onClick={() => { setIsCheckingSession(true); void loadProtectedDashboardData().catch(() => undefined).finally(() => setIsCheckingSession(false)); }}>
+          자료 다시 불러오기
+        </button>
       </div>
     );
   }
