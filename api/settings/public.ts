@@ -1,6 +1,6 @@
-import { GasRequestError } from '../_lib/gas';
-import { setPrivateJsonHeaders } from '../_lib/http';
-import { evaluateStudentAccess, readSettings } from '../_lib/settings';
+import { GasRequestError } from '../_lib/gas.js';
+import { setPrivateJsonHeaders } from '../_lib/http.js';
+import { evaluateStudentAccess, readSettings } from '../_lib/settings.js';
 
 export default async function handler(req: any, res: any) {
   setPrivateJsonHeaders(res);

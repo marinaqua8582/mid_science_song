@@ -1,6 +1,6 @@
-import { AppSettings, RubricCriterion, StudentAccessStatus } from '../../src/types';
-import { DEFAULT_RUBRICS } from '../../src/data/units';
-import { requestGas } from './gas';
+import { AppSettings, RubricCriterion, StudentAccessStatus } from '../../src/types.js';
+import { DEFAULT_RUBRICS } from '../../src/data/units.js';
+import { requestGas } from './gas.js';
 
 const DEFAULT_ACCESS_MESSAGE = '현재는 수행평가 활동 기간이 아닙니다. 선생님의 안내를 기다려 주세요.';
 

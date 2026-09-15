@@ -1,5 +1,5 @@
-import { clearAdminSession } from '../_lib/session';
-import { rejectInvalidOrigin, setPrivateJsonHeaders } from '../_lib/http';
+import { clearAdminSession } from '../_lib/session.js';
+import { rejectInvalidOrigin, setPrivateJsonHeaders } from '../_lib/http.js';
 
 export default function handler(req: any, res: any) {
   setPrivateJsonHeaders(res);

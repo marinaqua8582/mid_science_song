@@ -1,5 +1,5 @@
-import { GAS_SCRIPT } from '../src/data/gasScript';
-import { getAdminSession } from './_lib/session';
+import { GAS_SCRIPT } from '../src/data/gasScript.js';
+import { getAdminSession } from './_lib/session.js';
 
 export default function handler(req: any, res: any) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');

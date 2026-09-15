@@ -1,7 +1,7 @@
-import { isAdminPasswordConfigured, verifyAdminPassword } from '../_lib/password';
-import { isSessionConfigured, setAdminSession } from '../_lib/session';
-import { readRequestBody, rejectInvalidOrigin, requestIp, setPrivateJsonHeaders } from '../_lib/http';
-import { consumeRateLimit } from '../_lib/rate-limit';
+import { isAdminPasswordConfigured, verifyAdminPassword } from '../_lib/password.js';
+import { isSessionConfigured, setAdminSession } from '../_lib/session.js';
+import { readRequestBody, rejectInvalidOrigin, requestIp, setPrivateJsonHeaders } from '../_lib/http.js';
+import { consumeRateLimit } from '../_lib/rate-limit.js';
 
 export default async function handler(req: any, res: any) {
   setPrivateJsonHeaders(res);
