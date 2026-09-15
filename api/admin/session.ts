@@ -1,5 +1,5 @@
-import { getAdminSession, isSessionConfigured } from '../_lib/session';
-import { setPrivateJsonHeaders } from '../_lib/http';
+import { getAdminSession, isSessionConfigured } from '../_lib/session.js';
+import { setPrivateJsonHeaders } from '../_lib/http.js';
 
 export default function handler(req: any, res: any) {
   setPrivateJsonHeaders(res);

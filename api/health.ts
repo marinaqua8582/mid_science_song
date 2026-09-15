@@ -1,7 +1,7 @@
-import { gasConfigurationStatus } from './_lib/gas';
-import { isAdminPasswordConfigured } from './_lib/password';
-import { isSessionConfigured } from './_lib/session';
-import { setPrivateJsonHeaders } from './_lib/http';
+import { gasConfigurationStatus } from './_lib/gas.js';
+import { isAdminPasswordConfigured } from './_lib/password.js';
+import { isSessionConfigured } from './_lib/session.js';
+import { setPrivateJsonHeaders } from './_lib/http.js';
 
 export default function handler(req: any, res: any) {
   setPrivateJsonHeaders(res);

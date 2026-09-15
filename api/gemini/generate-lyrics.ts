@@ -1,8 +1,8 @@
 import { GoogleGenAI } from "@google/genai";
-import { readRequestBody, rejectInvalidOrigin, setPrivateJsonHeaders } from "../_lib/http";
-import { consumeRateLimit } from "../_lib/rate-limit";
-import { getStudentSession } from "../_lib/session";
-import { requireStudentAccess } from "../_lib/settings";
+import { readRequestBody, rejectInvalidOrigin, setPrivateJsonHeaders } from "../_lib/http.js";
+import { consumeRateLimit } from "../_lib/rate-limit.js";
+import { getStudentSession } from "../_lib/session.js";
+import { requireStudentAccess } from "../_lib/settings.js";
 
 export default async function handler(req: any, res: any) {
   setPrivateJsonHeaders(res);

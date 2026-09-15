@@ -1,8 +1,8 @@
-import { requestGas, GasRequestError } from '../_lib/gas';
-import { readRequestBody, rejectInvalidOrigin, requestIp, setPrivateJsonHeaders } from '../_lib/http';
-import { consumeRateLimit } from '../_lib/rate-limit';
-import { isSessionConfigured, normalizeStudentName, setStudentSession } from '../_lib/session';
-import { requireStudentAccess } from '../_lib/settings';
+import { requestGas, GasRequestError } from '../_lib/gas.js';
+import { readRequestBody, rejectInvalidOrigin, requestIp, setPrivateJsonHeaders } from '../_lib/http.js';
+import { consumeRateLimit } from '../_lib/rate-limit.js';
+import { isSessionConfigured, normalizeStudentName, setStudentSession } from '../_lib/session.js';
+import { requireStudentAccess } from '../_lib/settings.js';
 
 export default async function handler(req: any, res: any) {
   setPrivateJsonHeaders(res);

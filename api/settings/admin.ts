@@ -1,7 +1,7 @@
-import { GasRequestError } from '../_lib/gas';
-import { readRequestBody, rejectInvalidOrigin, setPrivateJsonHeaders } from '../_lib/http';
-import { getAdminSession } from '../_lib/session';
-import { readSettings, writeSettings } from '../_lib/settings';
+import { GasRequestError } from '../_lib/gas.js';
+import { readRequestBody, rejectInvalidOrigin, setPrivateJsonHeaders } from '../_lib/http.js';
+import { getAdminSession } from '../_lib/session.js';
+import { readSettings, writeSettings } from '../_lib/settings.js';
 
 export default async function handler(req: any, res: any) {
   setPrivateJsonHeaders(res);

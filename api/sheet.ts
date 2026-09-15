@@ -1,7 +1,7 @@
-import { GasRequestError, requestGas } from './_lib/gas';
-import { readRequestBody, rejectInvalidOrigin, setPrivateJsonHeaders } from './_lib/http';
-import { getAdminSession, getStudentSession } from './_lib/session';
-import { requireStudentAccess } from './_lib/settings';
+import { GasRequestError, requestGas } from './_lib/gas.js';
+import { readRequestBody, rejectInvalidOrigin, setPrivateJsonHeaders } from './_lib/http.js';
+import { getAdminSession, getStudentSession } from './_lib/session.js';
+import { requireStudentAccess } from './_lib/settings.js';
 
 const ADMIN_READ_ACTIONS = new Set(['getRoster', 'getSubmissions', 'getData']);
 const ADMIN_WRITE_ACTIONS = new Set(['saveRoster', 'upsertRosterStudent', 'deleteRosterStudent']);
