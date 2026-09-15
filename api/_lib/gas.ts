@@ -40,7 +40,7 @@ async function fetchGasResponse(
   // Apps Script ContentService responses are served through a temporary
   // googleusercontent URL. Let the Fetch implementation carry the redirect
   // state so the one-time response URL is consumed in the same request flow.
-  return fetch(input, { ...init, redirect: 'follow' });
+  return fetch(input, { ...init, redirect: 'follow', cache: 'no-store' });
 }
 
 export function gasConfigurationStatus(): { configured: boolean; missing: string[] } {
@@ -70,6 +70,10 @@ export async function requestGas(
     let response: Response;
     if (method === 'GET') {
       const url = new URL(gasUrl);
+      // Apps Script redirects to a short-lived googleusercontent response URL.
+      // A unique request key prevents an intermediary from reusing an expired
+      // redirect for repeated reads such as settings and roster refreshes.
+      url.searchParams.set('_request', `${Date.now()}-${Math.random().toString(36).slice(2)}`);
       url.searchParams.set('action', action);
       url.searchParams.set('secret', secret);
       Object.entries(payload).forEach(([key, value]) => {
