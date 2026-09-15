@@ -6,7 +6,7 @@ import { PrivacyBanner } from './PrivacyBanner';
 interface Props {
   roster: StudentRosterItem[];
   isLoading?: boolean;
-  onLogin: (student: StudentRosterItem) => void;
+  onLogin: (student: StudentRosterItem) => Promise<void>;
   onRefreshRoster?: () => Promise<StudentRosterItem[]>;
 }
 
@@ -46,7 +46,7 @@ export const StudentLogin: React.FC<Props> = ({ roster, isLoading = false, onLog
     return numbers;
   }, [roster, selectedClass]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
@@ -71,34 +71,20 @@ export const StudentLogin: React.FC<Props> = ({ roster, isLoading = false, onLog
       r => Number(r.classNum) === Number(selectedClass) && Number(r.studentNum) === Number(selectedNum)
     );
 
-    if (registeredStudent) {
-      // Verify typed name against registered name (space-insensitive)
-      const normInput = trimmedName.replace(/\s+/g, '').toLowerCase();
-      const normRegistered = registeredStudent.name.replace(/\s+/g, '').toLowerCase();
-
-      if (normInput !== normRegistered) {
-        setErrorMessage(`입력하신 이름('${trimmedName}')이 ${selectedClass}반 ${selectedNum}번 명단에 등록된 이름과 일치하지 않습니다. 이름을 올바르게 입력해 주세요.`);
-        return;
-      }
-
-      onLogin({
-        ...registeredStudent,
-        name: trimmedName
-      });
-      return;
-    }
-
-    // Fallback if roster is empty or student is not in roster
     const formattedNum = selectedNum < 10 ? `0${selectedNum}` : `${selectedNum}`;
-    const dynamicStudent: StudentRosterItem = {
-      id: `2-${selectedClass}-${formattedNum}`,
-      grade: 2,
+    const candidate: StudentRosterItem = {
+      id: registeredStudent?.id || `2-${selectedClass}-${formattedNum}`,
+      grade: registeredStudent?.grade || 2,
       classNum: Number(selectedClass),
       studentNum: Number(selectedNum),
       name: trimmedName,
     };
 
-    onLogin(dynamicStudent);
+    try {
+      await onLogin(candidate);
+    } catch (error: any) {
+      setErrorMessage(error?.message || '학생 로그인 정보를 확인하지 못했습니다. 다시 시도해 주세요.');
+    }
   };
 
   return (
@@ -219,4 +205,3 @@ export const StudentLogin: React.FC<Props> = ({ roster, isLoading = false, onLog
     </div>
   );
 };
-

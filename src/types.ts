@@ -87,7 +87,18 @@ export interface RubricCriterion {
 }
 
 export interface AppSettings {
-  teacherPin: string;
-  gasUrl: string;
   rubrics: RubricCriterion[];
+  studentAccessEnabled: boolean;
+  accessStartAt: string;
+  accessEndAt: string;
+  accessMessage: string;
+}
+
+export interface StudentAccessStatus {
+  isOpen: boolean;
+  reason: 'open' | 'disabled' | 'before_start' | 'after_end' | 'unavailable';
+  startAt: string;
+  endAt: string;
+  message: string;
+  checkedAt: string;
 }
