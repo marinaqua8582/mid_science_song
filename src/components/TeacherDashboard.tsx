@@ -2,9 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { StudentSubmission, StudentRosterItem, AppSettings, RubricCriterion } from '../types';
 import {
-  saveRoster, saveSettings, saveSubmissions, updateSingleSubmission, syncRosterToGAS,
-  mutateRosterStudentInGAS, fetchRosterFromGAS, fetchAllSubmissionsFromGAS, getGasUrl
+  saveRoster, updateSingleSubmission, syncRosterToGAS,
+  mutateRosterStudentInGAS, fetchAdminRosterFromGAS, fetchAllSubmissionsFromGAS
 } from '../utils/storage';
+import {
+  fetchAdminSettings, getAdminSession, loginAdmin, logoutAdmin, saveAdminSettings
+} from '../utils/api';
 import { GAS_SCRIPT } from '../data/gasScript';
 import { PrintableReport } from './PrintableReport';
 import { diffLyrics } from '../utils/diff';
@@ -12,7 +15,8 @@ import * as XLSX from 'xlsx';
 import {
   Lock, KeyRound, Users, FileCheck, Award, Link, Download, Upload,
   Search, Printer, CheckCircle2, Sliders, ExternalLink, Copy, Check,
-  Plus, Trash2, Eye, X, RefreshCw, AlertCircle, Save, Sparkles
+  Plus, Trash2, Eye, X, RefreshCw, AlertCircle, Save, Sparkles,
+  CalendarClock, LogOut, Loader2
 } from 'lucide-react';
 
 interface Props {
@@ -32,27 +36,31 @@ export const TeacherDashboard: React.FC<Props> = ({
   onUpdateRoster,
   onUpdateSubmissions,
 }) => {
-  // PIN Verification
+  // Server-side teacher authentication
   const [pinInput, setPinInput] = useState<string>('');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [pinError, setPinError] = useState<string>('');
+  const [isCheckingSession, setIsCheckingSession] = useState<boolean>(true);
+  const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
 
-  // Password Change state
-  const [currentPinInput, setCurrentPinInput] = useState<string>('');
-  const [newPinInput, setNewPinInput] = useState<string>('');
-  const [confirmPinInput, setConfirmPinInput] = useState<string>('');
-  const [pinChangeError, setPinChangeError] = useState<string>('');
-  const [pinChangeMsg, setPinChangeMsg] = useState<string>('');
-
-  // Active Tab: 'status' | 'roster' | 'rubrics' | 'gas' | 'password'
-  const [activeTab, setActiveTab] = useState<'status' | 'roster' | 'rubrics' | 'gas' | 'password'>('status');
+  // Active Tab: 'status' | 'roster' | 'rubrics' | 'access' | 'gas' | 'password'
+  const [activeTab, setActiveTab] = useState<'status' | 'roster' | 'rubrics' | 'access' | 'gas' | 'password'>('status');
 
   // Editable Rubrics state for Teacher customization
   const [editableRubrics, setEditableRubrics] = useState<RubricCriterion[]>(settings.rubrics);
+  const [accessEnabled, setAccessEnabled] = useState<boolean>(settings.studentAccessEnabled);
+  const [accessStartAt, setAccessStartAt] = useState<string>(settings.accessStartAt);
+  const [accessEndAt, setAccessEndAt] = useState<string>(settings.accessEndAt);
+  const [accessMessage, setAccessMessage] = useState<string>(settings.accessMessage);
+  const [isSavingSettings, setIsSavingSettings] = useState<boolean>(false);
 
   useEffect(() => {
     setEditableRubrics(settings.rubrics);
-  }, [settings.rubrics]);
+    setAccessEnabled(settings.studentAccessEnabled);
+    setAccessStartAt(settings.accessStartAt);
+    setAccessEndAt(settings.accessEndAt);
+    setAccessMessage(settings.accessMessage);
+  }, [settings]);
 
   // Filters for Status view
   const [classFilter, setClassFilter] = useState<string>('all');
@@ -75,13 +83,43 @@ export const TeacherDashboard: React.FC<Props> = ({
 
   // Copy indicator for GAS code
   const [copiedGas, setCopiedGas] = useState<boolean>(false);
-  const [gasUrlInput, setGasUrlInput] = useState<string>(settings.gasUrl || '');
+
+  const loadProtectedDashboardData = async () => {
+    const settingsResult = await fetchAdminSettings();
+    const serverSettings = settingsResult.initialized
+      ? settingsResult.settings
+      : await saveAdminSettings(settings);
+    onUpdateSettings(serverSettings);
+
+    const [fetchedRoster, fetchedSubmissions] = await Promise.all([
+      fetchAdminRosterFromGAS(),
+      fetchAllSubmissionsFromGAS(),
+    ]);
+    onUpdateRoster(fetchedRoster);
+    onUpdateSubmissions(fetchedSubmissions);
+  };
+
+  useEffect(() => {
+    let mounted = true;
+    getAdminSession()
+      .then(async (authenticated) => {
+        if (!mounted) return;
+        setIsAuthenticated(authenticated);
+        if (authenticated) await loadProtectedDashboardData();
+      })
+      .catch((error) => {
+        if (mounted) setPinError(error?.message || '관리자 보안 설정을 확인하지 못했습니다.');
+      })
+      .finally(() => {
+        if (mounted) setIsCheckingSession(false);
+      });
+    return () => { mounted = false; };
+  }, []);
 
   const refreshSubmissions = async (showAlert = false) => {
     setIsSyncingSubmissions(true);
     try {
       const fetched = await fetchAllSubmissionsFromGAS();
-      saveSubmissions(fetched);
       onUpdateSubmissions(fetched);
       if (showAlert) alert(`구글 시트에서 제출 자료 ${fetched.length}건을 불러왔습니다.`);
     } catch (error) {
@@ -119,65 +157,71 @@ export const TeacherDashboard: React.FC<Props> = ({
     }
   };
 
-  const handleSaveRubrics = () => {
+  const handleSaveRubrics = async () => {
     for (const r of editableRubrics) {
       if (!r.title.trim()) {
         alert('모든 평가 항목의 제목을 입력해주세요.');
         return;
       }
     }
-    const updatedSettings: AppSettings = {
-      ...settings,
-      rubrics: editableRubrics
-    };
-    saveSettings(updatedSettings);
-    onUpdateSettings(updatedSettings);
-    alert('수행평가 채점 기준표가 성공적으로 변경 및 저장되었습니다!');
+    setIsSavingSettings(true);
+    try {
+      const updatedSettings = await saveAdminSettings({ ...settings, rubrics: editableRubrics });
+      onUpdateSettings(updatedSettings);
+      alert('수행평가 채점 기준표가 서버에 저장되었습니다. 다른 컴퓨터에서도 동일하게 적용됩니다.');
+    } catch (error: any) {
+      alert(error?.message || '채점 기준표를 저장하지 못했습니다.');
+    } finally {
+      setIsSavingSettings(false);
+    }
   };
 
-  // Handle PIN Auth
-  const handlePinSubmit = (e: React.FormEvent) => {
+  // Handle server-side teacher authentication
+  const handlePinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (pinInput === settings.teacherPin) {
+    setPinError('');
+    setIsAuthenticating(true);
+    try {
+      await loginAdmin(pinInput);
       setIsAuthenticated(true);
-      setPinError('');
-      void refreshSubmissions();
-    } else {
-      setPinError('비밀번호가 일치하지 않습니다.');
+      setPinInput('');
+      await loadProtectedDashboardData();
+    } catch (error: any) {
+      setIsAuthenticated(false);
+      setPinError(error?.message || '교사 로그인에 실패했습니다.');
+    } finally {
+      setIsAuthenticating(false);
     }
   };
 
-  // Handle PIN Change
-  const handleChangePin = (e: React.FormEvent) => {
-    e.preventDefault();
-    setPinChangeError('');
-    setPinChangeMsg('');
+  const handleAdminLogout = async () => {
+    await logoutAdmin().catch(() => undefined);
+    setIsAuthenticated(false);
+    setActiveTab('status');
+  };
 
-    if (currentPinInput !== settings.teacherPin) {
-      setPinChangeError('현재 비밀번호가 일치하지 않습니다.');
-      return;
-    }
-    if (!newPinInput.trim()) {
-      setPinChangeError('새 비밀번호를 입력해주세요.');
-      return;
-    }
-    if (newPinInput !== confirmPinInput) {
-      setPinChangeError('새 비밀번호와 확인 입력이 일치하지 않습니다.');
+  const handleSaveAccessSettings = async () => {
+    if (accessStartAt && accessEndAt && new Date(accessStartAt).getTime() >= new Date(accessEndAt).getTime()) {
+      alert('접속 종료 일시는 시작 일시보다 뒤여야 합니다.');
       return;
     }
 
-    const updatedSettings = {
-      ...settings,
-      teacherPin: newPinInput.trim()
-    };
-
-    saveSettings(updatedSettings);
-    onUpdateSettings(updatedSettings);
-
-    setCurrentPinInput('');
-    setNewPinInput('');
-    setConfirmPinInput('');
-    setPinChangeMsg('비밀번호가 성공적으로 변경되었습니다!');
+    setIsSavingSettings(true);
+    try {
+      const updatedSettings = await saveAdminSettings({
+        ...settings,
+        studentAccessEnabled: accessEnabled,
+        accessStartAt,
+        accessEndAt,
+        accessMessage: accessMessage.trim() || settings.accessMessage,
+      });
+      onUpdateSettings(updatedSettings);
+      alert('학생 접속 가능 기간이 서버에 저장되었습니다.');
+    } catch (error: any) {
+      alert(error?.message || '학생 접속 기간을 저장하지 못했습니다.');
+    } finally {
+      setIsSavingSettings(false);
+    }
   };
 
   // Open Student Modal for Grading / Viewing
@@ -192,7 +236,7 @@ export const TeacherDashboard: React.FC<Props> = ({
   };
 
   // Save Teacher Evaluation
-  const handleSaveEvaluation = () => {
+  const handleSaveEvaluation = async () => {
     if (!selectedStudentSub) return;
 
     let total = 0;
@@ -214,16 +258,18 @@ export const TeacherDashboard: React.FC<Props> = ({
       }
     };
 
-    updateSingleSubmission(updated);
-
-    // Update parent state
-    const exists = submissions.some(s => s.id === updated.id);
-    const newSubs = exists 
-      ? submissions.map(s => s.id === updated.id ? updated : s)
-      : [...submissions, updated];
-    onUpdateSubmissions(newSubs);
-    setSelectedStudentSub(updated);
-    alert('평가 점수 및 피드백이 성공적으로 저장되었습니다!');
+    try {
+      await updateSingleSubmission(updated);
+      const exists = submissions.some(s => s.id === updated.id);
+      const newSubs = exists
+        ? submissions.map(s => s.id === updated.id ? updated : s)
+        : [...submissions, updated];
+      onUpdateSubmissions(newSubs);
+      setSelectedStudentSub(updated);
+      alert('평가 점수 및 피드백이 성공적으로 저장되었습니다!');
+    } catch (error: any) {
+      alert(error?.message || '평가 결과를 저장하지 못했습니다. 다시 시도해 주세요.');
+    }
   };
 
   // Download Excel Sample Roster
@@ -396,7 +442,7 @@ export const TeacherDashboard: React.FC<Props> = ({
   const handleFetchRosterFromGAS = async () => {
     setIsSyncingRoster(true);
     try {
-      const fetched = await fetchRosterFromGAS();
+      const fetched = await fetchAdminRosterFromGAS();
       onUpdateRoster(fetched);
       alert(`구글 시트에서 총 ${fetched.length}명의 학생 명단을 불러왔습니다.`);
     } catch (e) {
@@ -529,14 +575,6 @@ function doPost(e) {
     }
   };
 
-  // Save GAS Settings
-  const handleSaveGasSettings = () => {
-    const newSettings = { ...settings, gasUrl: gasUrlInput.trim() };
-    saveSettings(newSettings);
-    onUpdateSettings(newSettings);
-    alert('Google Sheets / GAS 설정이 저장되었습니다.');
-  };
-
   // Combine roster and submissions so every student in roster has a StudentSubmission record
   const mergedSubmissions: StudentSubmission[] = React.useMemo(() => {
     const allRosterSubmissions: StudentSubmission[] = roster.map((student, idx) => {
@@ -606,7 +644,16 @@ function doPost(e) {
     return true;
   });
 
-  // PIN Protection Gate Screen
+  if (isCheckingSession) {
+    return (
+      <div className="max-w-md mx-auto my-12 bg-white rounded-2xl shadow-xl border border-slate-200/80 p-8 text-center space-y-4">
+        <Loader2 className="w-10 h-10 text-slate-700 animate-spin mx-auto" />
+        <p className="text-sm font-semibold text-slate-600">안전한 교사 로그인 상태를 확인하는 중입니다...</p>
+      </div>
+    );
+  }
+
+  // Server-side password protection gate
   if (!isAuthenticated) {
     return (
       <div className="max-w-md mx-auto my-12 bg-white rounded-2xl shadow-xl border border-slate-200/80 p-8 text-center space-y-6">
@@ -614,7 +661,7 @@ function doPost(e) {
           <Lock className="w-8 h-8" />
         </div>
         <div>
-          <h2 className="text-2xl font-bold text-slate-800">교사 인증 (PIN 입력)</h2>
+          <h2 className="text-2xl font-bold text-slate-800">교사 인증</h2>
           <p className="text-sm text-slate-500 mt-1">
             교사 전용 평가 관리 대시보드 접근을 위해 비밀번호를 입력하세요.
           </p>
@@ -628,6 +675,7 @@ function doPost(e) {
               placeholder=""
               value={pinInput}
               onChange={(e) => setPinInput(e.target.value)}
+              disabled={isAuthenticating}
               className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-300 rounded-xl font-mono text-center text-lg tracking-widest focus:ring-2 focus:ring-slate-800 focus:outline-none"
             />
           </div>
@@ -638,9 +686,11 @@ function doPost(e) {
 
           <button
             type="submit"
-            className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl shadow-md transition-all text-sm"
+            disabled={isAuthenticating}
+            className="w-full py-3 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white font-bold rounded-xl shadow-md transition-all text-sm flex items-center justify-center gap-2"
           >
-            대시보드 접속하기
+            {isAuthenticating && <Loader2 className="w-4 h-4 animate-spin" />}
+            {isAuthenticating ? '보안 인증 중...' : '대시보드 접속하기'}
           </button>
         </form>
       </div>
@@ -653,11 +703,17 @@ function doPost(e) {
       <aside className="lg:col-span-4 xl:col-span-3 space-y-4 lg:sticky lg:top-20">
         {/* Admin Header Info Card */}
         <div className="bg-slate-900 text-white rounded-xl p-5 shadow-sm border border-slate-800 space-y-2">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <span className="px-2.5 py-0.5 bg-blue-600 text-white text-[10px] font-bold rounded uppercase tracking-wider">
               관리자 모드
             </span>
-            <span className="text-[10px] text-slate-400 font-medium">교사 전용</span>
+            <button
+              type="button"
+              onClick={handleAdminLogout}
+              className="text-[10px] text-slate-300 hover:text-white font-medium flex items-center gap-1"
+            >
+              <LogOut className="w-3 h-3" /> 로그아웃
+            </button>
           </div>
           <h2 className="text-base font-bold tracking-tight text-white">과학송 평가 대시보드</h2>
           <p className="text-xs text-slate-400 leading-relaxed">
@@ -726,7 +782,22 @@ function doPost(e) {
             </div>
           </button>
 
-          {/* Tab 4: Google Sheets Integration */}
+          {/* Tab 4: Student access period */}
+          <button
+            onClick={() => setActiveTab('access')}
+            className={`w-full p-3 rounded-lg text-left transition-all flex items-center justify-between gap-2 text-xs font-semibold border ${
+              activeTab === 'access'
+                ? 'bg-blue-600 text-white border-blue-600 shadow-sm font-bold'
+                : 'bg-white text-slate-700 border-transparent hover:bg-slate-100'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <CalendarClock className="w-4 h-4" />
+              <span>학생 접속 기간 설정</span>
+            </div>
+          </button>
+
+          {/* Tab 5: Google Sheets Integration */}
           <button
             onClick={() => setActiveTab('gas')}
             className={`w-full p-3 rounded-lg text-left transition-all flex items-center justify-between gap-2 text-xs font-semibold border ${
@@ -739,14 +810,10 @@ function doPost(e) {
               <Link className="w-4 h-4" />
               <span>구글 시트 실시간 연동</span>
             </div>
-            {settings.gasUrl ? (
-              <span className="w-2 h-2 rounded-full bg-emerald-500" title="연동 URL 설정됨" />
-            ) : (
-              <span className="w-2 h-2 rounded-full bg-slate-300" title="미연동" />
-            )}
+            <span className="w-2 h-2 rounded-full bg-emerald-500" title="보안 서버 연동" />
           </button>
 
-          {/* Tab 5: Password Change */}
+          {/* Tab 6: Password security */}
           <button
             onClick={() => setActiveTab('password')}
             className={`w-full p-3 rounded-lg text-left transition-all flex items-center justify-between gap-2 text-xs font-semibold border ${
@@ -757,7 +824,7 @@ function doPost(e) {
           >
             <div className="flex items-center gap-2.5">
               <KeyRound className="w-4 h-4" />
-              <span>교사 비밀번호 변경</span>
+              <span>교사 비밀번호 보안</span>
             </div>
           </button>
         </div>
@@ -1237,21 +1304,98 @@ function doPost(e) {
           <div className="flex justify-end pt-2 border-t border-slate-200">
             <button
               onClick={handleSaveRubrics}
-              className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow transition-all text-xs flex items-center gap-2"
+              disabled={isSavingSettings}
+              className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-bold rounded-xl shadow transition-all text-xs flex items-center gap-2"
             >
-              <Save className="w-4 h-4" /> 채점 기준표 변경사항 저장
+              {isSavingSettings ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              채점 기준표 변경사항 저장
             </button>
           </div>
         </div>
       )}
 
-      {/* TAB 4: GOOGLE SHEETS & GAS SETUP */}
+      {/* TAB 4: STUDENT ACCESS PERIOD */}
+      {activeTab === 'access' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
+          <div className="border-b border-slate-200 pb-4">
+            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <CalendarClock className="w-5 h-5 text-indigo-600" />
+              학생 접속 가능 기간 설정
+            </h3>
+            <p className="text-xs text-slate-500 mt-1">
+              한국 시간을 기준으로 학생의 로그인·작성·수정·제출 가능 시간을 제한합니다. 교사 대시보드는 항상 이용할 수 있습니다.
+            </p>
+          </div>
+
+          <label className="flex items-center justify-between gap-4 p-4 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer">
+            <div>
+              <div className="text-sm font-bold text-slate-900">학생 접속 허용</div>
+              <div className="text-xs text-slate-500 mt-0.5">끄면 날짜와 관계없이 학생 로그인이 차단됩니다.</div>
+            </div>
+            <input
+              type="checkbox"
+              checked={accessEnabled}
+              onChange={(event) => setAccessEnabled(event.target.checked)}
+              className="w-5 h-5 accent-indigo-600"
+            />
+          </label>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">접속 시작 일시</label>
+              <input
+                type="datetime-local"
+                value={accessStartAt}
+                onChange={(event) => setAccessStartAt(event.target.value)}
+                className="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              />
+              <p className="text-[11px] text-slate-500">비워 두면 시작일 제한이 없습니다.</p>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">접속 종료 일시</label>
+              <input
+                type="datetime-local"
+                value={accessEndAt}
+                onChange={(event) => setAccessEndAt(event.target.value)}
+                className="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              />
+              <p className="text-[11px] text-slate-500">비워 두면 종료일 제한이 없습니다.</p>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-700">기간 밖 학생 안내 문구</label>
+            <textarea
+              rows={3}
+              value={accessMessage}
+              maxLength={300}
+              onChange={(event) => setAccessMessage(event.target.value)}
+              className="w-full p-3 bg-white border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-3 pt-3 border-t border-slate-200">
+            <p className="text-xs text-slate-500">기존 제출 자료는 삭제되지 않습니다.</p>
+            <button
+              type="button"
+              onClick={handleSaveAccessSettings}
+              disabled={isSavingSettings}
+              className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-bold rounded-xl text-xs flex items-center gap-2"
+            >
+              {isSavingSettings ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              접속 기간 저장
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: GOOGLE SHEETS & GAS SETUP */}
       {activeTab === 'gas' && (
         <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-6">
           <div>
             <h3 className="text-lg font-bold text-slate-900">Google Sheets 및 GAS 웹 앱 연동</h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              전역 시스템 환경변수(<code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-700 font-mono">process.env.NEXT_PUBLIC_GAS_URL</code>)로 지정된 구글 시트 웹 앱 URL을 통해 모든 학생의 작업 데이터가 실시간 자동 동기화됩니다.
+              브라우저가 Google Sheets에 직접 연결하지 않고 Vercel 보안 서버를 거쳐 동기화됩니다.
             </p>
           </div>
 
@@ -1259,17 +1403,17 @@ function doPost(e) {
           <div className="p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-slate-800 block">
-                전역 API 연동 구글 시트 배포 URL (고정)
+                서버 전용 Google Sheets 연동
               </label>
               <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 text-[11px] font-bold rounded-full flex items-center gap-1">
-                <CheckCircle2 className="w-3.5 h-3.5" /> 전역 환경변수 적용됨
+                <CheckCircle2 className="w-3.5 h-3.5" /> 서버 전용 보호 방식
               </span>
             </div>
-            <div className="p-3 bg-white border border-slate-300 rounded-xl text-xs font-mono text-slate-700 break-all select-all font-medium">
-              {getGasUrl()}
+            <div className="p-3 bg-white border border-slate-300 rounded-xl text-xs text-slate-700 font-medium">
+              연결 URL과 통신 비밀키는 브라우저에 표시하지 않고 Vercel 서버 환경변수로만 관리합니다.
             </div>
             <p className="text-[11px] text-slate-500 leading-relaxed">
-              * Google Sheets를 공용 원본으로 사용하고 LocalStorage는 일시적인 브라우저 캐시로만 활용합니다.
+              * Google Sheets를 공용 원본으로 사용하며, 학생 전체 자료는 교사 로그인 후에만 조회됩니다.
             </p>
           </div>
 
@@ -1290,80 +1434,40 @@ function doPost(e) {
             <p className="text-xs text-indigo-900 leading-relaxed">
               1) 사용 중인 Google Sheets 문서에서 [확장 프로그램] &gt; [Apps Script]를 클릭합니다.<br />
               2) 위 버튼으로 복사한 코드를 기존 편집기에 붙여넣고 저장합니다.<br />
-              3) [배포] &gt; [새 배포] &gt; 유형: [웹 앱] 선택 후 <strong>'액세스 권한: 모든 사용자(Anyone)'</strong>로 설정하여 배포를 완료하세요.
+              3) Apps Script 프로젝트 속성에 Vercel과 동일한 <strong>GAS_API_SECRET</strong>을 등록합니다.<br />
+              4) [배포] &gt; [배포 관리]에서 새 버전으로 업데이트합니다.
             </p>
           </div>
         </div>
       )}
 
-      {/* TAB 5: TEACHER PASSWORD CHANGE */}
+      {/* TAB 6: TEACHER PASSWORD SECURITY */}
       {activeTab === 'password' && (
         <div className="bg-white rounded-2xl shadow-xs border border-slate-200 p-6 md:p-8 space-y-6 max-w-xl">
           <div className="border-b border-slate-200 pb-4">
             <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
               <KeyRound className="w-5 h-5 text-indigo-600" />
-              교사 대시보드 비밀번호 변경
+              교사 대시보드 비밀번호 보안
             </h3>
             <p className="text-xs text-slate-500 mt-1">
-              교사 전용 대시보드 접근용 비밀번호를 새로 설정할 수 있습니다.
+              비밀번호는 브라우저나 GitHub 코드에 저장되지 않고 서버에서 해시로 검증됩니다.
             </p>
           </div>
 
-          <form onSubmit={handleChangePin} className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700">현재 비밀번호</label>
-              <input
-                type="password"
-                value={currentPinInput}
-                onChange={(e) => setCurrentPinInput(e.target.value)}
-                placeholder="현재 비밀번호 입력"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-              />
+          <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-950 space-y-2">
+            <div className="font-bold flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" /> 서버 보안 인증 사용 중
             </div>
+            <p className="text-xs leading-relaxed">
+              로그인 후에는 HttpOnly 보안 쿠키가 사용되므로 학생이나 외부 사용자가 F12 개발자 도구에서 비밀번호를 확인할 수 없습니다.
+            </p>
+          </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700">새 비밀번호</label>
-              <input
-                type="password"
-                value={newPinInput}
-                onChange={(e) => setNewPinInput(e.target.value)}
-                placeholder="새로 설정할 비밀번호 입력"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700">새 비밀번호 확인</label>
-              <input
-                type="password"
-                value={confirmPinInput}
-                onChange={(e) => setConfirmPinInput(e.target.value)}
-                placeholder="새 비밀번호 다시 입력"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-              />
-            </div>
-
-            {pinChangeError && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 font-semibold flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-                {pinChangeError}
-              </div>
-            )}
-
-            {pinChangeMsg && (
-              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 font-semibold flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                {pinChangeMsg}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow transition-all text-sm flex items-center justify-center gap-2"
-            >
-              <Save className="w-4 h-4" /> 비밀번호 변경 저장
-            </button>
-          </form>
+          <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-950 leading-relaxed space-y-2">
+            <div className="font-bold">비밀번호를 변경하려면</div>
+            <p>새 비밀번호 해시를 만든 뒤 Vercel의 <code className="font-mono bg-white px-1 py-0.5 rounded">ADMIN_PASSWORD_HASH</code> 값을 교체하고 다시 배포합니다.</p>
+            <p>이 방식은 모든 컴퓨터에 같은 비밀번호를 적용하며, 원래 비밀번호가 코드나 브라우저에 저장되지 않습니다.</p>
+          </div>
         </div>
       )}
 

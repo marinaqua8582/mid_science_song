@@ -3,6 +3,34 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/api/admin/login",
+      "destination": "/api/admin/login"
+    },
+    {
+      "source": "/api/admin/session",
+      "destination": "/api/admin/session"
+    },
+    {
+      "source": "/api/admin/logout",
+      "destination": "/api/admin/logout"
+    },
+    {
+      "source": "/api/student/login",
+      "destination": "/api/student/login"
+    },
+    {
+      "source": "/api/student/logout",
+      "destination": "/api/student/logout"
+    },
+    {
+      "source": "/api/settings/public",
+      "destination": "/api/settings/public"
+    },
+    {
+      "source": "/api/settings/admin",
+      "destination": "/api/settings/admin"
+    },
+    {
       "source": "/api/gemini/generate-lyrics",
       "destination": "/api/gemini/generate-lyrics"
     },

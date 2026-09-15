@@ -1,25 +1,39 @@
 import { GoogleGenAI } from "@google/genai";
+import { readRequestBody, rejectInvalidOrigin, setPrivateJsonHeaders } from "../_lib/http";
+import { consumeRateLimit } from "../_lib/rate-limit";
+import { getStudentSession } from "../_lib/session";
+import { requireStudentAccess } from "../_lib/settings";
 
 export default async function handler(req: any, res: any) {
-  // CORS support
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS,PATCH,DELETE,POST,PUT");
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version"
-  );
-
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
+  setPrivateJsonHeaders(res);
 
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method Not Allowed" });
   }
+  if (rejectInvalidOrigin(req, res)) return;
+
+  const student = getStudentSession(req);
+  if (!student) {
+    return res.status(401).json({ error: "학생 로그인이 필요합니다." });
+  }
 
   try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
+    const access = await requireStudentAccess();
+    if (!access.isOpen) {
+      return res.status(403).json({
+        error: access.message,
+        code: "STUDENT_ACCESS_CLOSED",
+        access,
+      });
+    }
+
+    const rate = consumeRateLimit(`gemini:${student.id}`, 10, 30 * 60 * 1000);
+    if (!rate.allowed) {
+      res.setHeader("Retry-After", String(rate.retryAfterSeconds));
+      return res.status(429).json({ error: "가사 생성 횟수가 많습니다. 잠시 후 다시 시도해 주세요." });
+    }
+
+    const body = readRequestBody(req);
     const {
       unit,
       summary,
@@ -32,6 +46,10 @@ export default async function handler(req: any, res: any) {
 
     if (!unit || !summary) {
       return res.status(400).json({ error: "과학 단원과 학습 내용을 입력해주세요." });
+    }
+
+    if (String(summary).length > 12_000 || String(customPrompt || '').length > 4_000) {
+      return res.status(400).json({ error: "입력 내용이 너무 깁니다. 내용을 줄인 후 다시 시도해 주세요." });
     }
 
     const apiKey = process.env.GEMINI_API_KEY;

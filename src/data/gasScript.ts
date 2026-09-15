@@ -2,12 +2,14 @@ export const GAS_SCRIPT = String.raw`/**
  * Science Song 수행평가용 Google Apps Script
  *
  * 1. 이 코드를 수행평가 Google Sheets의 Apps Script 편집기에 붙여넣습니다.
- * 2. 웹 앱으로 새 버전을 배포하고 액세스 권한을 "모든 사용자"로 설정합니다.
- * 3. 조회 요청은 행을 만들거나 수정하지 않습니다.
+ * 2. Apps Script 프로젝트 속성에 GAS_API_SECRET을 등록합니다.
+ * 3. 웹 앱으로 새 버전을 배포하고 액세스 권한을 "모든 사용자"로 설정합니다.
+ * 4. 브라우저가 아니라 Vercel 서버만 이 스크립트를 호출합니다.
  */
 
 var ROSTER_SHEET_NAME = 'Roster';
 var SUBMISSIONS_SHEET_NAME = 'Submissions';
+var SETTINGS_SHEET_NAME = 'Settings';
 var CANONICAL_HEADERS = [
   'ID', '학년', '반', '번호', '이름',
   '단원', '학습정리', '핵심단어', '음악스타일',
@@ -21,11 +23,21 @@ function doGet(e) {
     var params = (e && e.parameter) || {};
     var action = params.action || 'ping';
 
+    if (!verifySecret_(params.secret)) {
+      return responseJSON({ status: 'error', message: 'Unauthorized' });
+    }
+
     if (action === 'ping') {
       return responseJSON({ status: 'success', message: 'GAS Active' });
     }
+    if (action === 'getPublicRoster') {
+      return responseJSON({ status: 'success', data: getPublicRoster_() });
+    }
     if (action === 'getRoster') {
       return responseJSON({ status: 'success', data: getRosterRows_() });
+    }
+    if (action === 'getSettings') {
+      return responseJSON(getSettingsResponse_());
     }
     if (action === 'getSubmissions' || action === 'getData') {
       return responseJSON({ status: 'success', data: getSubmissionObjects_() });
@@ -45,11 +57,27 @@ function doPost(e) {
     var contents = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     var action = contents.action || '';
 
+    if (!verifySecret_(contents.secret)) {
+      return responseJSON({ status: 'error', message: 'Unauthorized' });
+    }
+
     if (action === 'ping') {
       return responseJSON({ status: 'success', message: 'GAS Active' });
     }
+    if (action === 'getPublicRoster') {
+      return responseJSON({ status: 'success', data: getPublicRoster_() });
+    }
     if (action === 'getRoster') {
       return responseJSON({ status: 'success', data: getRosterRows_() });
+    }
+    if (action === 'verifyStudent') {
+      return responseJSON(verifyStudentResponse_(contents.data || contents));
+    }
+    if (action === 'getSettings') {
+      return responseJSON(getSettingsResponse_());
+    }
+    if (action === 'saveSettings') {
+      return responseJSON(saveSettings_(contents.settings));
     }
     if (action === 'getSubmissions' || action === 'getData') {
       return responseJSON({ status: 'success', data: getSubmissionObjects_() });
@@ -84,12 +112,127 @@ function responseJSON(obj) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+function verifySecret_(received) {
+  var expected = PropertiesService.getScriptProperties().getProperty('GAS_API_SECRET');
+  return Boolean(expected) && String(received || '') === String(expected);
+}
+
+function getPublicRoster_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(ROSTER_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.min(Math.max(sheet.getLastColumn(), 5), 6)).getValues();
+  var result = [];
+  for (var i = 0; i < rows.length; i++) {
+    var grade = Number(rows[i][1]) || 2;
+    var classNum = Number(rows[i][2]);
+    var studentNum = Number(rows[i][3]);
+    if (!classNum || !studentNum) continue;
+    result.push({
+      id: String(rows[i][0] || makeSubmissionId_(grade, classNum, studentNum).replace(/^sub-/, '')),
+      grade: grade,
+      classNum: classNum,
+      studentNum: studentNum
+    });
+  }
+  return result;
+}
+
+function verifyStudentResponse_(query) {
+  query = query || {};
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(ROSTER_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return { status: 'success', found: false };
+
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), 6)).getValues();
+  var targetGrade = Number(query.grade) || 2;
+  var targetClass = Number(query.classNum);
+  var targetNum = Number(query.studentNum);
+  var targetName = normalizeName_(query.name);
+
+  for (var i = 0; i < rows.length; i++) {
+    if (Number(rows[i][1]) === targetGrade && Number(rows[i][2]) === targetClass &&
+        Number(rows[i][3]) === targetNum && normalizeName_(rows[i][4]) === targetName) {
+      return {
+        status: 'success',
+        found: true,
+        student: {
+          id: String(rows[i][0] || makeSubmissionId_(targetGrade, targetClass, targetNum).replace(/^sub-/, '')),
+          grade: targetGrade,
+          classNum: targetClass,
+          studentNum: targetNum,
+          name: String(rows[i][4] || '').trim()
+        }
+      };
+    }
+  }
+  return { status: 'success', found: false };
+}
+
+function getSettingsResponse_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SETTINGS_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) {
+    return { status: 'success', found: false };
+  }
+
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][0] || '') !== 'appSettings') continue;
+    try {
+      var parsed = JSON.parse(String(rows[i][1] || '{}'));
+      return { status: 'success', found: true, settings: parsed };
+    } catch (ignore) {
+      return { status: 'error', message: 'Settings 시트의 설정값을 읽을 수 없습니다.' };
+    }
+  }
+  return { status: 'success', found: false };
+}
+
+function saveSettings_(settings) {
+  if (!settings || typeof settings !== 'object' || !Array.isArray(settings.rubrics)) {
+    return { status: 'error', message: '올바른 설정값이 필요합니다.' };
+  }
+
+  var safeSettings = {
+    rubrics: settings.rubrics.slice(0, 20).map(function(item, index) {
+      item = item || {};
+      return {
+        id: String(item.id || ('rubric-' + (index + 1))).slice(0, 80),
+        title: String(item.title || '').trim().slice(0, 200),
+        description: String(item.description || '').trim().slice(0, 2000),
+        maxPoints: Math.min(100, Math.max(1, Number(item.maxPoints) || 1))
+      };
+    }).filter(function(item) { return item.title !== ''; }),
+    studentAccessEnabled: settings.studentAccessEnabled !== false,
+    accessStartAt: String(settings.accessStartAt || '').slice(0, 35),
+    accessEndAt: String(settings.accessEndAt || '').slice(0, 35),
+    accessMessage: String(settings.accessMessage || '').trim().slice(0, 300)
+  };
+  if (!safeSettings.rubrics.length) {
+    return { status: 'error', message: '채점 기준은 최소 1개 이상이어야 합니다.' };
+  }
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(SETTINGS_SHEET_NAME) || ss.insertSheet(SETTINGS_SHEET_NAME);
+    sheet.clearContents();
+    sheet.getRange(1, 1, 1, 3).setValues([['Key', 'Value(JSON)', 'UpdatedAt']]);
+    sheet.getRange(2, 1, 1, 3).setValues([['appSettings', JSON.stringify(safeSettings), new Date()]]);
+    return { status: 'success', settings: safeSettings };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function getRosterRows_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(ROSTER_SHEET_NAME);
   if (!sheet) return [];
   var rows = sheet.getDataRange().getValues();
-  return rows.map(function(row) { return row.slice(0, 5); });
+  return rows.map(function(row) { return row.slice(0, 6); });
 }
 
 function saveRoster_(roster) {
@@ -230,7 +373,7 @@ function getSubmissionSheet_() {
 
   for (var i = 0; i < sheets.length; i++) {
     var sheet = sheets[i];
-    if (sheet.getName() === ROSTER_SHEET_NAME || sheet.getLastRow() === 0) continue;
+    if (sheet.getName() === ROSTER_SHEET_NAME || sheet.getName() === SETTINGS_SHEET_NAME || sheet.getLastRow() === 0) continue;
     var width = Math.min(Math.max(sheet.getLastColumn(), 1), 20);
     var headers = sheet.getRange(1, 1, 1, width).getValues()[0]
       .map(function(value) { return String(value || '').trim(); });

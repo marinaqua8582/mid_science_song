@@ -1,9 +1,17 @@
-import { AppSettings, StudentRosterItem, StudentSubmission, RubricCriterion } from '../types';
+import { AppSettings, StudentRosterItem, StudentSubmission } from '../types';
 import { DEFAULT_ROSTER, DEFAULT_RUBRICS } from '../data/units';
 
 const SETTINGS_KEY = 'science_song_app_settings';
 const ROSTER_KEY = 'science_song_roster';
 const SUBMISSIONS_KEY = 'science_song_submissions';
+
+async function readApiJson(response: Response): Promise<any> {
+  const data = await response.json().catch(() => null);
+  if (!response.ok || data?.status === 'error') {
+    throw new Error(data?.message || data?.error || '서버 요청을 처리하지 못했습니다.');
+  }
+  return data;
+}
 
 function canonicalRosterId(item: Partial<StudentRosterItem>): string {
   const grade = Number(item.grade) || 2;
@@ -13,19 +21,12 @@ function canonicalRosterId(item: Partial<StudentRosterItem>): string {
   return `${grade}-${classNum}-${formattedNum}`;
 }
 
-export function getGasUrl(): string {
-  const metaEnv = (import.meta as any).env || {};
-  const envUrl = metaEnv.NEXT_PUBLIC_GAS_URL ||
-                 metaEnv.VITE_GAS_URL ||
-                 (typeof window !== 'undefined' && ((window as any).NEXT_PUBLIC_GAS_URL || (window as any).GAS_URL)) ||
-                 'https://script.google.com/macros/s/AKfycbwnhnAzyN6HP__bXd0N_KzTY-GZOZ8ayqO6BD0i_iaMJPuxUGNsFDKys7c38VFleeJnDg/exec';
-  return envUrl;
-}
-
 export const getDefaultSettings = (): AppSettings => ({
-  teacherPin: '1234',
-  gasUrl: getGasUrl(),
   rubrics: DEFAULT_RUBRICS,
+  studentAccessEnabled: true,
+  accessStartAt: '',
+  accessEndAt: '',
+  accessMessage: '현재는 수행평가 활동 기간이 아닙니다. 선생님의 안내를 기다려 주세요.',
 });
 
 export function loadSettings(): AppSettings {
@@ -33,10 +34,19 @@ export function loadSettings(): AppSettings {
     const raw = localStorage.getItem(SETTINGS_KEY);
     const defaults = getDefaultSettings();
     if (!raw) return defaults;
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) || {};
     return {
-      ...parsed,
-      gasUrl: getGasUrl(), // Always prioritize process.env / global GAS_URL over local storage
+      rubrics: Array.isArray(parsed.rubrics) && parsed.rubrics.length > 0
+        ? parsed.rubrics
+        : defaults.rubrics,
+      studentAccessEnabled: typeof parsed.studentAccessEnabled === 'boolean'
+        ? parsed.studentAccessEnabled
+        : defaults.studentAccessEnabled,
+      accessStartAt: typeof parsed.accessStartAt === 'string' ? parsed.accessStartAt : '',
+      accessEndAt: typeof parsed.accessEndAt === 'string' ? parsed.accessEndAt : '',
+      accessMessage: typeof parsed.accessMessage === 'string' && parsed.accessMessage.trim()
+        ? parsed.accessMessage
+        : defaults.accessMessage,
     };
   } catch (e) {
     console.error('Failed to load settings', e);
@@ -46,7 +56,15 @@ export function loadSettings(): AppSettings {
 
 export function saveSettings(settings: AppSettings): void {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    // 브라우저 저장소는 화면 복구용 캐시일 뿐이며 서버 설정의 원본으로 사용하지 않습니다.
+    // 과거 버전의 teacherPin/gasUrl 값이 다시 저장되지 않도록 허용된 항목만 기록합니다.
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+      rubrics: settings.rubrics,
+      studentAccessEnabled: settings.studentAccessEnabled,
+      accessStartAt: settings.accessStartAt,
+      accessEndAt: settings.accessEndAt,
+      accessMessage: settings.accessMessage,
+    }));
   } catch (e) {
     console.error('Failed to save settings', e);
   }
@@ -174,155 +192,58 @@ export function parseGasSubmissionRows(rows: any[]): StudentSubmission[] {
 }
 
 export async function fetchAllSubmissionsFromGAS(): Promise<StudentSubmission[]> {
-  const gasUrl = getGasUrl();
-
-  const processResponse = (responseData: any): StudentSubmission[] | null => {
-    if (!responseData || responseData.status === 'error') return null;
-    const rows = Array.isArray(responseData)
-      ? responseData
-      : Array.isArray(responseData.data)
-        ? responseData.data
-        : Array.isArray(responseData.submissions)
-          ? responseData.submissions
-          : null;
-    if (!rows) return null;
-    // 원격 조회가 성공한 경우 Google Sheets 결과만을 공용 원본으로 사용합니다.
-    // 기기별 localStorage를 섞으면 한 기기에만 있는 자료가 원격 자료처럼 보일 수 있습니다.
-    const parsed = parseGasSubmissionRows(rows);
-    saveSubmissions(parsed);
-    return parsed;
-  };
-
-  try {
-    const apiResponse = await fetch('/api/sheet', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'getSubmissions', gasUrl }),
-    });
-    if (apiResponse.ok) {
-      const parsed = processResponse(await apiResponse.json().catch(() => null));
-      if (parsed) return parsed;
-    }
-  } catch (error) {
-    console.warn('Backend proxy fetch submissions error:', error);
-  }
-
-  // 조회 폴백도 GET만 사용합니다. 조회 때문에 빈 제출 행이 생기는 것을 방지합니다.
-  if (gasUrl && gasUrl.startsWith('http')) {
-    for (const action of ['getSubmissions', 'getData']) {
-      try {
-        const url = `${gasUrl}${gasUrl.includes('?') ? '&' : '?'}action=${action}`;
-        const response = await fetch(url);
-        if (!response.ok) continue;
-        const parsed = processResponse(await response.json().catch(() => null));
-        if (parsed) return parsed;
-      } catch (error) {
-        console.warn(`Direct GET ${action} error:`, error);
-      }
-    }
-  }
-
-  return loadSubmissions();
+  const apiResponse = await fetch('/api/sheet', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'getSubmissions' }),
+  });
+  const responseData = await readApiJson(apiResponse);
+  const rows = Array.isArray(responseData?.data)
+    ? responseData.data
+    : Array.isArray(responseData?.submissions)
+      ? responseData.submissions
+      : [];
+  const parsed = parseGasSubmissionRows(rows);
+  return parsed;
 }
 
-export async function syncRosterToGAS(roster: StudentRosterItem[], gasUrlParam?: string): Promise<boolean> {
-  const targetGasUrl = gasUrlParam || getGasUrl();
-  const payload = {
-    action: 'saveRoster',
-    roster,
-    gasUrl: targetGasUrl
-  };
-
-  // 1. Backend proxy API (/api/sheet)
+export async function syncRosterToGAS(roster: StudentRosterItem[]): Promise<boolean> {
   try {
     const apiRes = await fetch('/api/sheet', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'saveRoster', roster }),
     });
-
-    if (apiRes.ok) {
-      const data = await apiRes.json().catch(() => null);
-      if (data && data.status === 'success') return true;
-    }
+    const data = await readApiJson(apiRes);
+    return data?.status === 'success';
   } catch (e) {
-    console.warn('API route roster sync warning:', e);
+    console.warn('Protected roster sync warning:', e);
+    return false;
   }
-
-  // 2. Direct fetch to Google Apps Script URL as fallback
-  if (targetGasUrl && targetGasUrl.startsWith('http')) {
-    try {
-      const res = await fetch(targetGasUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        const resData = await res.json().catch(() => null);
-        if (resData && resData.status === 'success') return true;
-      }
-    } catch (e) {
-      try {
-        await fetch(targetGasUrl, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(payload),
-        });
-        return true;
-      } catch (err) {
-        console.warn('Direct GAS roster sync warning:', err);
-      }
-    }
-  }
-
-  return false;
 }
 
 export async function mutateRosterStudentInGAS(
   action: 'upsertRosterStudent' | 'deleteRosterStudent',
   student: StudentRosterItem,
-  gasUrlParam?: string
 ): Promise<boolean> {
-  const targetGasUrl = gasUrlParam || getGasUrl();
-  const payload = { action, student, gasUrl: targetGasUrl };
-
   try {
     const apiRes = await fetch('/api/sheet', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ action, student })
     });
-    if (apiRes.ok) {
-      const data = await apiRes.json().catch(() => null);
-      if (data?.status === 'success') return true;
-    }
+    const data = await readApiJson(apiRes);
+    return data?.status === 'success';
   } catch (e) {
-    console.warn('API route roster mutation warning:', e);
+    console.warn('Protected roster mutation warning:', e);
+    return false;
   }
-
-  if (targetGasUrl && targetGasUrl.startsWith('http')) {
-    try {
-      const res = await fetch(targetGasUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload)
-      });
-      if (res.ok) {
-        const data = await res.json().catch(() => null);
-        return data?.status === 'success';
-      }
-    } catch (e) {
-      console.warn('Direct GAS roster mutation warning:', e);
-    }
-  }
-
-  return false;
 }
 
-export function parseGasRosterRows(rows: any[]): StudentRosterItem[] {
+export function parseGasRosterRows(rows: any[], allowMissingName = false): StudentRosterItem[] {
   if (!Array.isArray(rows) || rows.length === 0) return [];
   const roster: StudentRosterItem[] = [];
 
@@ -331,10 +252,11 @@ export function parseGasRosterRows(rows: any[]): StudentRosterItem[] {
     for (const item of rows) {
       if (!item) continue;
       const name = String(item.name || item.studentName || item.성명 || item.이름 || '').trim();
-      if (name && name !== '이름' && name !== '성명') {
+      if ((allowMissingName || name) && name !== '이름' && name !== '성명') {
         const grade = Number(item.grade || item.학년) || 2;
-        const classNum = Number(item.classNum || item.class || item.반) || 1;
-        const studentNum = Number(item.studentNum || item.number || item.num || item.번호) || 1;
+        const classNum = Number(item.classNum || item.class || item.반) || 0;
+        const studentNum = Number(item.studentNum || item.number || item.num || item.번호) || 0;
+        if (classNum <= 0 || studentNum <= 0) continue;
         const id = canonicalRosterId({ grade, classNum, studentNum });
         roster.push({ id, grade, classNum, studentNum, name });
       }
@@ -414,7 +336,7 @@ export function parseGasRosterRows(rows: any[]): StudentRosterItem[] {
       }
     }
 
-    if (name && name !== '이름' && name !== '성명' && !name.toLowerCase().includes('id') && classNum > 0 && studentNum > 0) {
+    if ((allowMissingName || name) && name !== '이름' && name !== '성명' && !name.toLowerCase().includes('id') && classNum > 0 && studentNum > 0) {
       const canonicalId = canonicalRosterId({ grade, classNum, studentNum });
       roster.push({
         // ID 열의 오타·중복보다 실제 학년·반·번호를 우선합니다.
@@ -441,72 +363,42 @@ export function parseGasRosterRows(rows: any[]): StudentRosterItem[] {
 }
 
 export async function fetchRosterFromGAS(): Promise<StudentRosterItem[]> {
-  const gasUrl = getGasUrl();
-  const payload = {
-    action: 'getRoster',
-    gasUrl
-  };
+  const apiRes = await fetch('/api/sheet', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'getPublicRoster' })
+  });
+  const resData = await readApiJson(apiRes);
+  const rawRows = Array.isArray(resData?.data) ? resData.data : [];
+  const roster = parseGasRosterRows(rawRows, true);
+  saveRoster(roster);
+  return roster;
+}
 
-  const processResponse = (resData: any): StudentRosterItem[] | null => {
-    if (!resData) return null;
-    const rawRows = Array.isArray(resData) ? resData :
-                    Array.isArray(resData?.data) ? resData.data :
-                    Array.isArray(resData?.roster) ? resData.roster :
-                    Array.isArray(resData?.result) ? resData.result : null;
-    if (rawRows && Array.isArray(rawRows)) {
-      const roster = parseGasRosterRows(rawRows);
-      saveRoster(roster);
-      return roster;
-    }
-    return null;
-  };
-
-  // 1. Try backend proxy API (/api/sheet)
-  try {
-    const apiRes = await fetch('/api/sheet', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    if (apiRes.ok) {
-      const resData = await apiRes.json().catch(() => null);
-      const roster = processResponse(resData);
-      if (roster) return roster;
-    }
-  } catch (e) {
-    console.warn('Backend proxy fetchRosterFromGAS error:', e);
-  }
-
-  // 2. Direct GET request to gasUrl
-  if (gasUrl && gasUrl.startsWith('http')) {
-    try {
-      const getUrl = `${gasUrl}${gasUrl.includes('?') ? '&' : '?'}action=getRoster`;
-      const directRes = await fetch(getUrl);
-      if (directRes.ok) {
-        const resData = await directRes.json().catch(() => null);
-        const roster = processResponse(resData);
-        if (roster) return roster;
-      }
-    } catch (e) {
-      console.warn('Direct GET fetchRosterFromGAS error:', e);
-    }
-  }
-
-  return loadRoster();
+export async function fetchAdminRosterFromGAS(): Promise<StudentRosterItem[]> {
+  const apiRes = await fetch('/api/sheet', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'getRoster' })
+  });
+  const resData = await readApiJson(apiRes);
+  const rawRows = Array.isArray(resData?.data) ? resData.data : [];
+  const roster = parseGasRosterRows(rawRows);
+  saveRoster(roster);
+  return roster;
 }
 
 export async function fetchStudentGoogleIdFromGAS(
   student: Pick<StudentRosterItem, 'grade' | 'classNum' | 'studentNum' | 'name'>
 ): Promise<string | null> {
-  const gasUrl = getGasUrl();
   const payload = {
     action: 'getStudentGoogleId',
     grade: student.grade,
     classNum: student.classNum,
     studentNum: student.studentNum,
     name: student.name,
-    gasUrl
   };
 
   const readGoogleId = (data: any): string | null => {
@@ -518,39 +410,20 @@ export async function fetchStudentGoogleIdFromGAS(
   try {
     const apiRes = await fetch('/api/sheet', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-
-    if (apiRes.ok) {
-      const googleId = readGoogleId(await apiRes.json().catch(() => null));
-      if (googleId) return googleId;
-    }
+    const googleId = readGoogleId(await readApiJson(apiRes));
+    if (googleId) return googleId;
   } catch (e) {
-    console.warn('Backend proxy fetch student Google ID error:', e);
-  }
-
-  if (gasUrl && gasUrl.startsWith('http')) {
-    try {
-      const directRes = await fetch(gasUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload)
-      });
-
-      if (directRes.ok) {
-        return readGoogleId(await directRes.json().catch(() => null));
-      }
-    } catch (e) {
-      console.warn('Direct GAS fetch student Google ID error:', e);
-    }
+    console.warn('Protected student Google ID fetch error:', e);
   }
 
   return null;
 }
 
 export interface FormSubmissionPayload {
-  gasUrl?: string;
   action?: string;
   id: string;
   grade: number;
@@ -574,7 +447,7 @@ export interface FormSubmissionPayload {
   evaluation: StudentSubmission['evaluation'];
 }
 
-export function buildSubmissionPayload(submission: StudentSubmission, gasUrl?: string): FormSubmissionPayload {
+export function buildSubmissionPayload(submission: StudentSubmission): FormSubmissionPayload {
   const step1 = submission.step1;
   const step2 = submission.step2;
   const step3 = submission.step3;
@@ -587,7 +460,6 @@ export function buildSubmissionPayload(submission: StudentSubmission, gasUrl?: s
   const submittedAtStr = step4?.finalSubmittedAt || submission.updatedAt || new Date().toLocaleString('ko-KR');
 
   return {
-    gasUrl,
     action: 'saveSubmission',
     id: submission.id,
     grade: submission.grade,
@@ -709,48 +581,24 @@ export async function fetchStudentDataFromGAS(
   try {
     const apiRes = await fetch('/api/sheet', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-
-    if (apiRes.ok) {
-      const data = await apiRes.json().catch(() => null);
-      if (data && data.status === 'success' && data.found && data.data) {
-        return parseGasDataToSubmission(data.data);
-      }
+    const data = await readApiJson(apiRes);
+    if (data?.found && data?.data) {
+      return parseGasDataToSubmission(data.data);
     }
   } catch (e) {
-    console.warn('Backend proxy fetch student error:', e);
-  }
-
-  // 2. Direct GET fetch to GAS URL if needed. Read operations never use POST.
-  const gasUrl = getGasUrl();
-  if (gasUrl && gasUrl.startsWith('http')) {
-    try {
-      const params = new URLSearchParams({
-        action: 'getStudentData',
-        grade: String(grade),
-        classNum: String(classNum),
-        studentNum: String(studentNum),
-        name,
-        id: payload.id,
-      });
-      const res = await fetch(`${gasUrl}${gasUrl.includes('?') ? '&' : '?'}${params.toString()}`);
-      if (res.ok) {
-        const data = await res.json().catch(() => null);
-        if (data && data.status === 'success' && data.found && data.data) {
-          return parseGasDataToSubmission(data.data);
-        }
-      }
-    } catch (e) {
-      console.warn('Direct GAS fetch student error:', e);
-    }
+    console.warn('Protected student data fetch error:', e);
+    throw e;
   }
 
   return null;
 }
 
-export function updateSingleSubmission(submission: StudentSubmission): void {
+export async function updateSingleSubmission(submission: StudentSubmission): Promise<void> {
+  await syncSubmissionToGAS(submission);
   const current = loadSubmissions();
   const idx = current.findIndex(s => s.id === submission.id);
   if (idx >= 0) {
@@ -759,73 +607,15 @@ export function updateSingleSubmission(submission: StudentSubmission): void {
     current.push(submission);
   }
   saveSubmissions(current);
-
-  // Immediately sync to Google Apps Script via /api/sheet backend proxy
-  syncSubmissionToGAS(submission).catch(err => {
-    console.warn('GAS sync warning:', err);
-  });
 }
 
-export async function syncSubmissionToGAS(submission: StudentSubmission, gasUrlParam?: string): Promise<boolean> {
-  const targetGasUrl = gasUrlParam || getGasUrl();
-  const bodyData = buildSubmissionPayload(submission, targetGasUrl);
-
-  // 1. Backend proxy API (/api/sheet)
-  try {
-    const apiRes = await fetch('/api/sheet', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(bodyData),
-    });
-
-    if (apiRes.ok) {
-      const data = await apiRes.json().catch(() => null);
-      if (data && data.status === 'success') return true;
-    }
-  } catch (e) {
-    console.warn('API route sheet sync warning:', e);
-  }
-
-  // 2. Direct fetch to Google Apps Script URL as fallback
-  if (targetGasUrl && targetGasUrl.startsWith('http')) {
-    const payload = {
-      action: 'saveSubmission',
-      data: bodyData,
-      ...bodyData,
-    };
-
-    try {
-      const response = await fetch(targetGasUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (response.ok) {
-        const resData = await response.json().catch(() => null);
-        if (resData && resData.status === 'success') return true;
-      }
-    } catch (e) {
-      // Fallback: mode 'no-cors'
-      try {
-        await fetch(targetGasUrl, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: {
-            'Content-Type': 'text/plain;charset=utf-8',
-          },
-          body: JSON.stringify(payload),
-        });
-        return true;
-      } catch (err) {
-        console.warn('Direct GAS sync warning:', err);
-      }
-    }
-  }
-
-  return false;
+export async function syncSubmissionToGAS(submission: StudentSubmission): Promise<void> {
+  const bodyData = buildSubmissionPayload(submission);
+  const apiRes = await fetch('/api/sheet', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(bodyData),
+  });
+  await readApiJson(apiRes);
 }
