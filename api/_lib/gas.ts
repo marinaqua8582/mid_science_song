@@ -81,6 +81,22 @@ export async function requestGas(
     try {
       data = JSON.parse(responseText);
     } catch {
+      let responseHost = 'unknown';
+      let responsePath = 'unknown';
+      try {
+        const responseUrl = new URL(response.url);
+        responseHost = responseUrl.hostname;
+        responsePath = responseUrl.pathname;
+      } catch {
+        // Keep safe fallback values. Never log the query string because it can contain the secret.
+      }
+      console.error('Invalid GAS response metadata:', {
+        status: response.status,
+        contentType: response.headers.get('content-type') || 'unknown',
+        responseHost,
+        responsePath,
+        bodyLength: responseText.length,
+      });
       throw new GasRequestError('Google Apps Script가 올바른 JSON 응답을 보내지 않았습니다.');
     }
 
