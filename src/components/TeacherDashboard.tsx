@@ -41,6 +41,7 @@ export const TeacherDashboard: React.FC<Props> = ({
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [pinError, setPinError] = useState<string>('');
   const [dashboardError, setDashboardError] = useState<string>('');
+  const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
   const [isCheckingSession, setIsCheckingSession] = useState<boolean>(true);
   const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
 
@@ -87,6 +88,7 @@ export const TeacherDashboard: React.FC<Props> = ({
 
   const loadProtectedDashboardData = async () => {
     setDashboardError('');
+    setIsLoadingDashboard(true);
     try {
     const settingsResult = await fetchAdminSettings();
     const serverSettings = settingsResult.initialized
@@ -103,6 +105,8 @@ export const TeacherDashboard: React.FC<Props> = ({
     } catch (error: any) {
       setDashboardError(error?.message || '교사 자료를 불러오지 못했습니다.');
       throw error;
+    } finally {
+      setIsLoadingDashboard(false);
     }
   };
 
@@ -651,11 +655,11 @@ function doPost(e) {
     return true;
   });
 
-  if (isCheckingSession) {
+  if (isCheckingSession || isLoadingDashboard) {
     return (
       <div className="max-w-md mx-auto my-12 bg-white rounded-2xl shadow-xl border border-slate-200/80 p-8 text-center space-y-4">
         <Loader2 className="w-10 h-10 text-slate-700 animate-spin mx-auto" />
-        <p className="text-sm font-semibold text-slate-600">안전한 교사 로그인 상태를 확인하는 중입니다...</p>
+        <p className="text-sm font-semibold text-slate-600">{isLoadingDashboard ? '학생 명단과 제출 자료를 불러오는 중입니다...' : '안전한 교사 로그인 상태를 확인하는 중입니다...'}</p>
       </div>
     );
   }
