@@ -76,19 +76,19 @@ export default async function handler(req: any, res: any) {
 
   try {
     if (action === 'ping') {
-      const data = await requestGas('ping', { method: 'POST' });
+      const data = await requestGas('ping', { method: 'GET' });
       return res.status(200).json(data);
     }
 
     if (action === 'getPublicRoster') {
-      const data = await requestGas('getPublicRoster', { method: 'POST' });
+      const data = await requestGas('getPublicRoster', { method: 'GET' });
       return res.status(200).json({ status: 'success', data: publicRosterRows(data) });
     }
 
     const admin = getAdminSession(req);
     if (ADMIN_READ_ACTIONS.has(action)) {
       if (!admin) return res.status(401).json({ status: 'error', message: '교사 로그인이 필요합니다.' });
-      const data = await requestGas(action, { method: 'POST' });
+      const data = await requestGas(action, { method: 'GET' });
       return res.status(200).json(data);
     }
 
@@ -104,13 +104,13 @@ export default async function handler(req: any, res: any) {
     if (STUDENT_READ_ACTIONS.has(action)) {
       if (admin) {
         const source = body?.data && typeof body.data === 'object' ? body.data : body;
-        const data = await requestGas(action, { method: 'POST', payload: source });
+        const data = await requestGas(action, { method: 'GET', payload: source });
         return res.status(200).json(data);
       }
 
       const student = getStudentSession(req);
       if (!student) return res.status(401).json({ status: 'error', message: '학생 로그인이 필요합니다.' });
-      const data = await requestGas(action, { method: 'POST', payload: requestStudentPayload(student) });
+      const data = await requestGas(action, { method: 'GET', payload: requestStudentPayload(student) });
       return res.status(200).json(data);
     }
 
