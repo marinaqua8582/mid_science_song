@@ -29,12 +29,27 @@ async function readJson(response: Response): Promise<any> {
   return data;
 }
 
+// AbortController also supports older classroom mobile browsers.
+async function readEndpoint(url: string): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(url, {
+      method: 'GET', credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+    });
+    // Consume the body within the timeout, including a stalled response body.
+    const body = await response.text();
+    return new Response(body, { status: response.status, headers: response.headers });
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new ApiError('서버 응답이 늦어지고 있습니다. 잠시 후 다시 불러와 주세요.', 504);
+    }
+    throw error;
+  } finally { clearTimeout(timeout); }
+}
+
 export async function fetchStudentAccessStatus(): Promise<StudentAccessStatus> {
-  const response = await fetch('/api/settings/public', {
-    method: 'GET',
-    credentials: 'same-origin',
-    cache: 'no-store',
-  });
+  const response = await readEndpoint('/api/settings/public');
   const data = await readJson(response);
   return data.access as StudentAccessStatus;
 }
@@ -61,11 +76,7 @@ export async function logoutStudent(): Promise<void> {
 }
 
 export async function getAdminSession(): Promise<boolean> {
-  const response = await fetch('/api/admin/session', {
-    method: 'GET',
-    credentials: 'same-origin',
-    cache: 'no-store',
-  });
+  const response = await readEndpoint('/api/admin/session');
   if (response.status === 401) return false;
   const data = await readJson(response);
   return data.authenticated === true;
@@ -96,11 +107,7 @@ export interface AdminSettingsResponse {
 }
 
 export async function fetchAdminSettings(): Promise<AdminSettingsResponse> {
-  const response = await fetch('/api/settings/admin', {
-    method: 'GET',
-    credentials: 'same-origin',
-    cache: 'no-store',
-  });
+  const response = await readEndpoint('/api/settings/admin');
   return readJson(response);
 }
 
