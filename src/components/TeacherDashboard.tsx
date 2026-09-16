@@ -235,6 +235,19 @@ export const TeacherDashboard: React.FC<Props> = ({
     }
   };
 
+  const handleReleaseAccess = async () => {
+    if (!confirm('시작·종료 시각 제한을 해제하고 학생 접속을 허용할까요? 기존 제출 자료는 유지됩니다.')) return;
+    setIsSavingSettings(true);
+    try {
+      const latest = await fetchAdminSettings();
+      const updated = await saveAdminSettings({ ...latest.settings, studentAccessEnabled: true, accessStartAt: '', accessEndAt: '' });
+      onUpdateSettings(updated);
+      alert('접속 기간 제한을 해제했습니다.');
+    } catch (error: any) {
+      alert(error?.message || '접속 제한을 해제하지 못했습니다.');
+    } finally { setIsSavingSettings(false); }
+  };
+
   // Open Student Modal for Grading / Viewing
   const handleOpenDetailModal = (sub: StudentSubmission) => {
     setSelectedStudentSub(sub);
@@ -1399,6 +1412,10 @@ function doPost(e) {
             />
           </div>
 
+          <button type="button" disabled={isSavingSettings} onClick={handleReleaseAccess}
+            className="px-4 py-2 border border-indigo-300 rounded-lg text-indigo-700 disabled:opacity-60">
+            접속 제한 해제하고 열기
+          </button>
           <div className="flex items-center justify-between gap-3 pt-3 border-t border-slate-200">
             <p className="text-xs text-slate-500">기존 제출 자료는 삭제되지 않습니다.</p>
             <button
