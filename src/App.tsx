@@ -86,13 +86,13 @@ export default function App() {
 
   // Ignore a late public-roster response after switching to the teacher view.
   useEffect(() => {
-    if (appMode !== 'student') return;
+    if (appMode !== 'student' || studentAccess?.isOpen !== true) return;
     let active = true;
     fetchRosterFromGAS().then((gasRoster) => {
       if (active && Array.isArray(gasRoster)) setRoster(gasRoster);
     }).catch((error) => console.warn('Public roster fetch:', error));
     return () => { active = false; };
-  }, [appMode]);
+  }, [appMode, studentAccess?.isOpen]);
 
   useEffect(() => {
     if (studentAccess && !studentAccess.isOpen && currentStudent) {
