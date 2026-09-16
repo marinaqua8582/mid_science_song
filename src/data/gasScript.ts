@@ -82,6 +82,9 @@ function doPost(e) {
     if (action === 'getSettings') {
       return responseJSON(getSettingsResponse_());
     }
+    if (action === 'consumeGeminiQuota') {
+      return responseJSON(consumeGeminiQuota_(contents.studentId));
+    }
     if (action === 'saveSettings') {
       return responseJSON(saveSettings_(contents.settings));
     }
@@ -231,6 +234,26 @@ function saveSettings_(settings) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// Shared across Vercel instances. Counter updates are atomic and do not touch student work.
+function consumeGeminiQuota_(studentId) {
+  var id = String(studentId || '').trim();
+  if (!id || id.length > 120) return { status: 'error', message: 'Invalid student ID' };
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var properties = PropertiesService.getScriptProperties();
+    var key = 'geminiQuota:' + encodeURIComponent(id);
+    var now = Date.now();
+    var raw = properties.getProperty(key);
+    var bucket = raw ? JSON.parse(raw) : null;
+    if (!bucket || bucket.resetAt <= now) bucket = { count: 0, resetAt: now + 30 * 60 * 1000 };
+    if (bucket.count >= 10) return { status: 'success', allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((bucket.resetAt - now) / 1000)) };
+    bucket.count++;
+    properties.setProperty(key, JSON.stringify(bucket));
+    return { status: 'success', allowed: true, retryAfterSeconds: 0 };
+  } finally { lock.releaseLock(); }
 }
 
 function getRosterRows_() {
