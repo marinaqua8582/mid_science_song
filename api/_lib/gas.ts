@@ -1,4 +1,6 @@
 const REQUEST_TIMEOUT_MS = 15_000;
+const READ_BUDGET_MS = 25_000;
+const pendingReads = new Map<string, Promise<any>>();
 
 export class GasRequestError extends Error {
   status: number;
@@ -54,23 +56,31 @@ export async function requestGas(
   action: string,
   options: { method?: 'GET' | 'POST'; payload?: Record<string, any> } = {},
 ): Promise<any> {
-  // Only reads can be repeated safely after a missing/expired response.
-  // A failed write response does not prove that Sheets was left unchanged.
-  const attempts = options.method === 'GET' ? 3 : 1;
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    try {
-      return await requestGasOnce(action, options);
-    } catch (error) {
-      if (!(error instanceof GasRequestError) || error.status < 502 || attempt === attempts - 1) {
-        throw error;
+  if (options.method !== 'GET') return requestGasOnce(action, options);
+  const key = JSON.stringify([getGasUrl(), action, options.payload || {}]);
+  const existing = pendingReads.get(key);
+  if (existing) return existing;
+  const pending = (async () => {
+    const deadline = Date.now() + READ_BUDGET_MS;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new GasRequestError('Google Apps Script 응답 시간이 초과되었습니다.', 504);
+      try {
+        return await requestGasOnce(action, options, Math.min(REQUEST_TIMEOUT_MS, remaining));
+      } catch (error) {
+        if (!(error instanceof GasRequestError) || ![502, 504].includes(error.status) || attempt === 2) throw error;
       }
     }
-  }
+  })();
+  pendingReads.set(key, pending);
+  try { return await pending; }
+  finally { if (pendingReads.get(key) === pending) pendingReads.delete(key); }
 }
 
 async function requestGasOnce(
   action: string,
   options: { method?: 'GET' | 'POST'; payload?: Record<string, any> },
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<any> {
   const gasUrl = getGasUrl();
   const secret = getGasSecret();
@@ -82,7 +92,7 @@ async function requestGasOnce(
   const method = options.method || 'POST';
   const payload = options.payload || {};
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     let response: Response;
