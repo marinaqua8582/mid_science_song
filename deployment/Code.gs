@@ -1,4 +1,4 @@
-export const GAS_SCRIPT = String.raw`/**
+/**
  * Science Song 수행평가용 Google Apps Script
  *
  * 1. 이 코드를 수행평가 Google Sheets의 Apps Script 편집기에 붙여넣습니다.
@@ -706,4 +706,3 @@ function inferStatus_(learningContent, aiLyrics, editedLyrics, sunoLink) {
   if (learningContent) return 'step1';
   return 'not_started';
 }
-`;
