@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { readRequestBody, rejectInvalidOrigin, setPrivateJsonHeaders } from "../_lib/http.js";
-import { consumeRateLimit } from "../_lib/rate-limit.js";
+import { requestGas, GasRequestError } from "../_lib/gas.js";
 import { getStudentSession } from "../_lib/session.js";
 import { requireStudentAccess } from "../_lib/settings.js";
 
@@ -27,12 +27,6 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    const rate = consumeRateLimit(`gemini:${student.id}`, 10, 30 * 60 * 1000);
-    if (!rate.allowed) {
-      res.setHeader("Retry-After", String(rate.retryAfterSeconds));
-      return res.status(429).json({ error: "가사 생성 횟수가 많습니다. 잠시 후 다시 시도해 주세요." });
-    }
-
     const body = readRequestBody(req);
     const {
       unit,
@@ -57,6 +51,13 @@ export default async function handler(req: any, res: any) {
       return res.status(500).json({
         error: "GEMINI_API_KEY가 설정되지 않았습니다. Vercel 또는 서버 환경 변수에 GEMINI_API_KEY를 등록해주세요.",
       });
+    }
+
+    const rate = await requestGas('consumeGeminiQuota', { method: 'POST', payload: { studentId: student.id } });
+    if (typeof rate?.allowed !== 'boolean') throw new GasRequestError('가사 생성 횟수 확인에 실패했습니다.');
+    if (!rate.allowed) {
+      res.setHeader('Retry-After', String(Math.max(1, Number(rate.retryAfterSeconds) || 60)));
+      return res.status(429).json({ error: '가사 생성은 학생별로 30분 동안 10회까지 가능합니다. 잠시 후 다시 시도해 주세요.' });
     }
 
     const ai = new GoogleGenAI({
@@ -109,7 +110,7 @@ export default async function handler(req: any, res: any) {
     return res.status(200).json({ lyrics });
   } catch (error: any) {
     console.error("Gemini API generation error:", error);
-    return res.status(500).json({
+    return res.status(error instanceof GasRequestError ? error.status : 500).json({
       error: error?.message || "Gemini API 가사 생성 중 오류가 발생했습니다.",
     });
   }
