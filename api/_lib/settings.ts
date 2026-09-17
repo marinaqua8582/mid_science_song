@@ -12,7 +12,25 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   accessMessage: DEFAULT_ACCESS_MESSAGE,
 };
 
-let cached: { settings: AppSettings; initialized: boolean; expiresAt: number } | null = null;
+const SETTINGS_FRESH_MS = 15_000;
+const PUBLIC_SETTINGS_STALE_MS = 10 * 60 * 1000;
+
+let cached: {
+  settings: AppSettings;
+  initialized: boolean;
+  expiresAt: number;
+  staleUntil: number;
+} | null = null;
+
+function updateCache(settings: AppSettings, initialized: boolean): void {
+  const now = Date.now();
+  cached = {
+    settings,
+    initialized,
+    expiresAt: now + SETTINGS_FRESH_MS,
+    staleUntil: now + PUBLIC_SETTINGS_STALE_MS,
+  };
+}
 
 function cleanDateTime(value: unknown): string {
   const text = String(value || '').trim();
@@ -67,8 +85,22 @@ export async function readSettings(force = false): Promise<{ settings: AppSettin
   const response = await requestGas('getSettings', { method: 'GET' });
   const initialized = response?.found === true && response?.settings && typeof response.settings === 'object';
   const settings = normalizeSettings(initialized ? response.settings : DEFAULT_APP_SETTINGS);
-  cached = { settings, initialized, expiresAt: Date.now() + 15_000 };
+  updateCache(settings, initialized);
   return { settings, initialized };
+}
+
+// The public landing screen may use a recently verified value when Apps Script
+// has a temporary cold-start/redirect delay. Login and every protected write
+// still call readSettings() and therefore keep the live server-side check.
+export async function readPublicSettings(): Promise<{ settings: AppSettings; initialized: boolean }> {
+  try {
+    return await readSettings();
+  } catch (error) {
+    if (cached && cached.staleUntil > Date.now()) {
+      return { settings: cached.settings, initialized: cached.initialized };
+    }
+    throw error;
+  }
 }
 
 export async function writeSettings(value: unknown): Promise<AppSettings> {
@@ -82,7 +114,7 @@ export async function writeSettings(value: unknown): Promise<AppSettings> {
   }
 
   await requestGas('saveSettings', { method: 'POST', payload: { settings } });
-  cached = { settings, initialized: true, expiresAt: Date.now() + 15_000 };
+  updateCache(settings, true);
   return settings;
 }
 
