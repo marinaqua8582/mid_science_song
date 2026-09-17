@@ -33,12 +33,16 @@ async function readJson(response: Response): Promise<any> {
 }
 
 // AbortController also supports older classroom mobile browsers.
-async function readEndpoint(url: string): Promise<Response> {
+async function readEndpoint(
+  url: string,
+  cache: RequestCache = 'no-store',
+  timeoutMs = 30_000,
+): Promise<Response> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
-      method: 'GET', credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+      method: 'GET', credentials: 'same-origin', cache, signal: controller.signal,
     });
     // Consume the body within the timeout, including a stalled response body.
     const body = await response.text();
@@ -53,7 +57,7 @@ async function readEndpoint(url: string): Promise<Response> {
 
 export async function fetchStudentAccessStatus(): Promise<StudentAccessStatus> {
   try {
-    const response = await readEndpoint('/api/settings/public');
+    const response = await readEndpoint('/api/settings/public', 'default');
     const data = await readJson(response);
     const access = data.access as StudentAccessStatus;
     localStorage.setItem(ACCESS_STATUS_CACHE_KEY, JSON.stringify({ access, cachedAt: Date.now() }));
@@ -122,6 +126,16 @@ export async function logoutAdmin(): Promise<void> {
 export interface AdminSettingsResponse {
   settings: AppSettings;
   initialized: boolean;
+}
+
+export interface AdminDashboardResponse extends AdminSettingsResponse {
+  roster: any[];
+  submissions: any[];
+}
+
+export async function fetchAdminDashboard(): Promise<AdminDashboardResponse> {
+  const response = await readEndpoint('/api/admin/dashboard', 'no-store', 40_000);
+  return readJson(response);
 }
 
 export async function fetchAdminSettings(): Promise<AdminSettingsResponse> {
