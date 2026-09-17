@@ -935,9 +935,13 @@ function doPost(e) {
                 className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:outline-none"
               >
                 <option value="all">전체 학급 (반)</option>
-                <option value="1">1반</option>
-                <option value="2">2반</option>
-                <option value="3">3반</option>
+                {Array.from(new Set([...roster, ...submissions]
+                  .map(item => Number(item.classNum))
+                  .filter(classNum => Number.isInteger(classNum) && classNum > 0)))
+                  .sort((a, b) => a - b)
+                  .map(classNum => (
+                    <option key={classNum} value={classNum}>{classNum}반</option>
+                  ))}
               </select>
 
               <select
