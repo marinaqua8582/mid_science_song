@@ -363,11 +363,10 @@ export function parseGasRosterRows(rows: any[], allowMissingName = false): Stude
 }
 
 export async function fetchRosterFromGAS(): Promise<StudentRosterItem[]> {
-  const apiRes = await fetch('/api/sheet', {
-    method: 'POST',
+  const apiRes = await fetch('/api/roster/public', {
+    method: 'GET',
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'getPublicRoster' })
+    cache: 'default',
   });
   const resData = await readApiJson(apiRes);
   const rawRows = Array.isArray(resData?.data) ? resData.data : [];
