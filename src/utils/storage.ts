@@ -363,13 +363,13 @@ export function parseGasRosterRows(rows: any[], allowMissingName = false): Stude
 }
 
 export async function fetchRosterFromGAS(): Promise<StudentRosterItem[]> {
-  const apiRes = await fetch('/api/roster/public', {
+  const apiRes = await fetch('/api/settings/public', {
     method: 'GET',
     credentials: 'same-origin',
     cache: 'default',
   });
   const resData = await readApiJson(apiRes);
-  const rawRows = Array.isArray(resData?.data) ? resData.data : [];
+  const rawRows = Array.isArray(resData?.roster) ? resData.roster : [];
   const roster = parseGasRosterRows(rawRows, true);
   saveRoster(roster);
   return roster;
