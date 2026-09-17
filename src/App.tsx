@@ -8,7 +8,7 @@ import {
   updateSingleSubmission, getDefaultSettings, fetchStudentDataFromGAS, fetchRosterFromGAS,
 } from './utils/storage';
 import {
-  fetchStudentAccessStatus, loginStudent, logoutStudent
+  fetchStudentBootstrap, loginStudent, logoutStudent
 } from './utils/api';
 import { PrivacyBanner } from './components/PrivacyBanner';
 import { StudentLogin } from './components/StudentLogin';
@@ -73,9 +73,10 @@ export default function App() {
     const refreshAccess = async () => {
       let nextDelay = 60_000;
       try {
-        const status = await fetchStudentAccessStatus();
+        const { access: status, roster: gasRoster } = await fetchStudentBootstrap();
         if (stopped) return;
         setStudentAccess(status);
+        setRoster(gasRoster);
         setAccessError('');
       } catch (error: any) {
         if (stopped) return;
@@ -92,16 +93,6 @@ export default function App() {
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, []);
-
-  // Ignore a late public-roster response after switching to the teacher view.
-  useEffect(() => {
-    if (appMode !== 'student' || studentAccess?.isOpen !== true) return;
-    let active = true;
-    fetchRosterFromGAS().then((gasRoster) => {
-      if (active && Array.isArray(gasRoster)) setRoster(gasRoster);
-    }).catch((error) => console.warn('Public roster fetch:', error));
-    return () => { active = false; };
-  }, [appMode, studentAccess?.isOpen]);
 
   useEffect(() => {
     if (studentAccess && !studentAccess.isOpen && currentStudent) {
