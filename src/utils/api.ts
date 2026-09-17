@@ -1,5 +1,8 @@
 import { AppSettings, StudentAccessStatus, StudentRosterItem } from '../types';
 
+const ACCESS_STATUS_CACHE_KEY = 'science_song_student_access_status';
+const ACCESS_STATUS_CACHE_MS = 5 * 60 * 1000;
+
 export class ApiError extends Error {
   status: number;
   code?: string;
@@ -49,9 +52,24 @@ async function readEndpoint(url: string): Promise<Response> {
 }
 
 export async function fetchStudentAccessStatus(): Promise<StudentAccessStatus> {
-  const response = await readEndpoint('/api/settings/public');
-  const data = await readJson(response);
-  return data.access as StudentAccessStatus;
+  try {
+    const response = await readEndpoint('/api/settings/public');
+    const data = await readJson(response);
+    const access = data.access as StudentAccessStatus;
+    localStorage.setItem(ACCESS_STATUS_CACHE_KEY, JSON.stringify({ access, cachedAt: Date.now() }));
+    return access;
+  } catch (error) {
+    try {
+      const raw = localStorage.getItem(ACCESS_STATUS_CACHE_KEY);
+      const cached = raw ? JSON.parse(raw) : null;
+      if (cached?.access && Number(cached.cachedAt) + ACCESS_STATUS_CACHE_MS > Date.now()) {
+        return cached.access as StudentAccessStatus;
+      }
+    } catch {
+      // Ignore an invalid browser cache and surface the original server error.
+    }
+    throw error;
+  }
 }
 
 export async function loginStudent(
