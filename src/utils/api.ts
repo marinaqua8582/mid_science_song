@@ -55,19 +55,28 @@ async function readEndpoint(
   } finally { clearTimeout(timeout); }
 }
 
-export async function fetchStudentAccessStatus(): Promise<StudentAccessStatus> {
+export interface StudentBootstrapResponse {
+  access: StudentAccessStatus;
+  roster: StudentRosterItem[];
+}
+
+export async function fetchStudentBootstrap(): Promise<StudentBootstrapResponse> {
   try {
     const response = await readEndpoint('/api/settings/public', 'default');
     const data = await readJson(response);
     const access = data.access as StudentAccessStatus;
-    localStorage.setItem(ACCESS_STATUS_CACHE_KEY, JSON.stringify({ access, cachedAt: Date.now() }));
-    return access;
+    const roster = Array.isArray(data.roster) ? data.roster as StudentRosterItem[] : [];
+    localStorage.setItem(ACCESS_STATUS_CACHE_KEY, JSON.stringify({ access, roster, cachedAt: Date.now() }));
+    return { access, roster };
   } catch (error) {
     try {
       const raw = localStorage.getItem(ACCESS_STATUS_CACHE_KEY);
       const cached = raw ? JSON.parse(raw) : null;
       if (cached?.access && Number(cached.cachedAt) + ACCESS_STATUS_CACHE_MS > Date.now()) {
-        return cached.access as StudentAccessStatus;
+        return {
+          access: cached.access as StudentAccessStatus,
+          roster: Array.isArray(cached.roster) ? cached.roster as StudentRosterItem[] : [],
+        };
       }
     } catch {
       // Ignore an invalid browser cache and surface the original server error.

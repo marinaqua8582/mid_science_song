@@ -42,6 +42,13 @@ function doGet(e) {
     if (action === 'getSettings') {
       return responseJSON(getSettingsResponse_());
     }
+    if (action === 'getStudentBootstrap') {
+      return responseJSON({
+        status: 'success',
+        settings: getSettingsResponse_(),
+        roster: getPublicRoster_()
+      });
+    }
     if (action === 'getAdminDashboardData') {
       return responseJSON({
         status: 'success',

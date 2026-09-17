@@ -35,10 +35,6 @@
       "destination": "/api/settings/admin"
     },
     {
-      "source": "/api/roster/public",
-      "destination": "/api/roster/public"
-    },
-    {
       "source": "/api/gemini/generate-lyrics",
       "destination": "/api/gemini/generate-lyrics"
     },
