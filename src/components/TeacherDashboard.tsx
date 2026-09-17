@@ -90,16 +90,17 @@ export const TeacherDashboard: React.FC<Props> = ({
     setDashboardError('');
     setIsLoadingDashboard(true);
     try {
-    const settingsResult = await fetchAdminSettings();
+    // These reads are independent once the teacher session is authenticated.
+    // Start together so settings latency does not delay roster/submission reads.
+    const [settingsResult, fetchedRoster, fetchedSubmissions] = await Promise.all([
+      fetchAdminSettings(),
+      fetchAdminRosterFromGAS(),
+      fetchAllSubmissionsFromGAS(),
+    ]);
     const serverSettings = settingsResult.initialized
       ? settingsResult.settings
       : await saveAdminSettings(settings);
     onUpdateSettings(serverSettings);
-
-    const [fetchedRoster, fetchedSubmissions] = await Promise.all([
-      fetchAdminRosterFromGAS(),
-      fetchAllSubmissionsFromGAS(),
-    ]);
     onUpdateRoster(fetchedRoster);
     onUpdateSubmissions(fetchedSubmissions);
     } catch (error: any) {
