@@ -3,10 +3,11 @@ import { createPortal } from 'react-dom';
 import { StudentSubmission, StudentRosterItem, AppSettings, RubricCriterion } from '../types';
 import {
   saveRoster, updateSingleSubmission, syncRosterToGAS,
-  mutateRosterStudentInGAS, fetchAdminRosterFromGAS, fetchAllSubmissionsFromGAS
+  mutateRosterStudentInGAS, fetchAdminRosterFromGAS, fetchAllSubmissionsFromGAS,
+  parseGasRosterRows, parseGasSubmissionRows
 } from '../utils/storage';
 import {
-  fetchAdminSettings, getAdminSession, loginAdmin, logoutAdmin, saveAdminSettings
+  fetchAdminDashboard, fetchAdminSettings, getAdminSession, loginAdmin, logoutAdmin, saveAdminSettings
 } from '../utils/api';
 import { GAS_SCRIPT } from '../data/gasScript';
 import { PrintableReport } from './PrintableReport';
@@ -90,19 +91,15 @@ export const TeacherDashboard: React.FC<Props> = ({
     setDashboardError('');
     setIsLoadingDashboard(true);
     try {
-    // These reads are independent once the teacher session is authenticated.
-    // Start together so settings latency does not delay roster/submission reads.
-    const [settingsResult, fetchedRoster, fetchedSubmissions] = await Promise.all([
-      fetchAdminSettings(),
-      fetchAdminRosterFromGAS(),
-      fetchAllSubmissionsFromGAS(),
-    ]);
-    const serverSettings = settingsResult.initialized
-      ? settingsResult.settings
-      : await saveAdminSettings(settings);
-    onUpdateSettings(serverSettings);
-    onUpdateRoster(fetchedRoster);
-    onUpdateSubmissions(fetchedSubmissions);
+      // Settings, roster and submissions are returned by one Apps Script call.
+      // This avoids three concurrent cold starts on the teacher's first visit.
+      const dashboard = await fetchAdminDashboard();
+      const serverSettings = dashboard.initialized
+        ? dashboard.settings
+        : await saveAdminSettings(settings);
+      onUpdateSettings(serverSettings);
+      onUpdateRoster(parseGasRosterRows(dashboard.roster));
+      onUpdateSubmissions(parseGasSubmissionRows(dashboard.submissions));
     } catch (error: any) {
       setDashboardError(error?.message || '교사 자료를 불러오지 못했습니다.');
       throw error;
