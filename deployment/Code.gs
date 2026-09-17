@@ -135,6 +135,12 @@ function verifySecret_(received) {
 }
 
 function getPublicRoster_() {
+  var cache = CacheService.getScriptCache();
+  var cachedRoster = cache.get('publicRoster');
+  if (cachedRoster) {
+    try { return JSON.parse(cachedRoster); } catch (ignoreCache) {}
+  }
+
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(ROSTER_SHEET_NAME);
   if (!sheet || sheet.getLastRow() < 2) return [];
@@ -152,6 +158,7 @@ function getPublicRoster_() {
       studentNum: studentNum
     });
   }
+  cache.put('publicRoster', JSON.stringify(result), 300);
   return result;
 }
 
@@ -310,6 +317,7 @@ function saveRoster_(roster) {
       ]);
     }
     if (rows.length) sheet.getRange(2, 1, rows.length, 6).setValues(rows);
+    CacheService.getScriptCache().remove('publicRoster');
     return { status: 'success', count: rows.length };
   } finally {
     lock.releaseLock();
@@ -378,6 +386,7 @@ function upsertRosterStudent_(student) {
       ]);
       targetRow = sheet.getLastRow();
     }
+    CacheService.getScriptCache().remove('publicRoster');
     return { status: 'success', row: targetRow };
   } finally {
     lock.releaseLock();
@@ -398,6 +407,7 @@ function deleteRosterStudent_(student) {
           Number(rows[i][2]) === Number(student.classNum) &&
           Number(rows[i][3]) === Number(student.studentNum)) {
         sheet.deleteRow(i + 2);
+        CacheService.getScriptCache().remove('publicRoster');
         return { status: 'success', deleted: true };
       }
     }
