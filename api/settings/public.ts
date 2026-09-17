@@ -1,6 +1,6 @@
 import { GasRequestError } from '../_lib/gas.js';
 import { setPrivateJsonHeaders } from '../_lib/http.js';
-import { evaluateStudentAccess, readSettings } from '../_lib/settings.js';
+import { evaluateStudentAccess, readPublicSettings } from '../_lib/settings.js';
 
 export default async function handler(req: any, res: any) {
   setPrivateJsonHeaders(res);
@@ -9,7 +9,11 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const { settings } = await readSettings();
+    const { settings } = await readPublicSettings();
+    // This response contains no personal or secret data. A short shared cache
+    // prevents every classroom device from cold-starting Apps Script, while
+    // server-side login/save checks continue to use live settings.
+    res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=15, stale-while-revalidate=300');
     return res.status(200).json({ status: 'success', access: evaluateStudentAccess(settings) });
   } catch (error: any) {
     console.error('Public settings error:', error?.name || 'Error', error?.message || 'Unknown error');

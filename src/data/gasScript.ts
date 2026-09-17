@@ -42,6 +42,14 @@ function doGet(e) {
     if (action === 'getSettings') {
       return responseJSON(getSettingsResponse_());
     }
+    if (action === 'getAdminDashboardData') {
+      return responseJSON({
+        status: 'success',
+        settings: getSettingsResponse_(),
+        roster: getRosterRows_(),
+        submissions: getSubmissionObjects_()
+      });
+    }
     if (action === 'getSubmissions' || action === 'getData') {
       return responseJSON({ status: 'success', data: getSubmissionObjects_() });
     }
@@ -179,6 +187,14 @@ function verifyStudentResponse_(query) {
 }
 
 function getSettingsResponse_() {
+  var cache = CacheService.getScriptCache();
+  var cachedSettings = cache.get('appSettings');
+  if (cachedSettings) {
+    try {
+      return { status: 'success', found: true, settings: JSON.parse(cachedSettings) };
+    } catch (ignoreCache) {}
+  }
+
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SETTINGS_SHEET_NAME);
   if (!sheet || sheet.getLastRow() < 2) {
@@ -190,6 +206,7 @@ function getSettingsResponse_() {
     if (String(rows[i][0] || '') !== 'appSettings') continue;
     try {
       var parsed = JSON.parse(String(rows[i][1] || '{}'));
+      cache.put('appSettings', JSON.stringify(parsed), 300);
       return { status: 'success', found: true, settings: parsed };
     } catch (ignore) {
       return { status: 'error', message: 'Settings 시트의 설정값을 읽을 수 없습니다.' };
@@ -230,6 +247,7 @@ function saveSettings_(settings) {
     sheet.clearContents();
     sheet.getRange(1, 1, 1, 3).setValues([['Key', 'Value(JSON)', 'UpdatedAt']]);
     sheet.getRange(2, 1, 1, 3).setValues([['appSettings', JSON.stringify(safeSettings), new Date()]]);
+    CacheService.getScriptCache().put('appSettings', JSON.stringify(safeSettings), 300);
     return { status: 'success', settings: safeSettings };
   } finally {
     lock.releaseLock();
