@@ -52,11 +52,16 @@ export default async function handler(req: any, res: any) {
       });
     }
 
+    const verifiedGrade = Number(verified.grade) || grade;
+    const verifiedClass = Number(verified.classNum) || classNum;
+    const verifiedNum = Number(verified.studentNum) || studentNum;
     const student = {
-      id: String(verified.id || `${grade}-${classNum}-${String(studentNum).padStart(2, '0')}`),
-      grade: Number(verified.grade) || grade,
-      classNum: Number(verified.classNum) || classNum,
-      studentNum: Number(verified.studentNum) || studentNum,
+      // Keep one stable identity even when the Roster sheet's ID column is missing,
+      // duplicated, or uses a legacy arbitrary value.
+      id: `${verifiedGrade}-${verifiedClass}-${String(verifiedNum).padStart(2, '0')}`,
+      grade: verifiedGrade,
+      classNum: verifiedClass,
+      studentNum: verifiedNum,
       name: String(verified.name || name),
     };
     setStudentSession(res, student);

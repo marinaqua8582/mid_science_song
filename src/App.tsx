@@ -68,20 +68,29 @@ export default function App() {
     setRoster(loadedRoster);
     setSubmissions(loadedSubs);
 
-    const refreshAccess = () => {
-      fetchStudentAccessStatus()
-        .then((status) => {
-          setStudentAccess(status);
-          setAccessError('');
-        })
-        .catch((error) => {
-          setStudentAccess(null);
-          setAccessError(error?.message || '학생 접속 가능 시간을 확인하지 못했습니다.');
-        });
+    let stopped = false;
+    let timer: number | undefined;
+    const refreshAccess = async () => {
+      let nextDelay = 60_000;
+      try {
+        const status = await fetchStudentAccessStatus();
+        if (stopped) return;
+        setStudentAccess(status);
+        setAccessError('');
+      } catch (error: any) {
+        if (stopped) return;
+        setStudentAccess(null);
+        setAccessError(error?.message || '학생 접속 가능 시간을 확인하지 못했습니다.');
+        nextDelay = 5_000;
+      } finally {
+        if (!stopped) timer = window.setTimeout(refreshAccess, nextDelay);
+      }
     };
-    refreshAccess();
-    const timer = window.setInterval(refreshAccess, 60_000);
-    return () => window.clearInterval(timer);
+    void refreshAccess();
+    return () => {
+      stopped = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, []);
 
   // Ignore a late public-roster response after switching to the teacher view.
@@ -118,7 +127,13 @@ export default function App() {
 
   // Current student submission object derived from state
   const currentSubmission = currentStudent
-    ? submissions.find(s => s.id === `sub-${currentStudent.id}`) || {
+    ? submissions.find(s =>
+        s.id === `sub-${currentStudent.id}` ||
+        (Number(s.grade || 2) === Number(currentStudent.grade || 2) &&
+          Number(s.classNum) === Number(currentStudent.classNum) &&
+          Number(s.studentNum) === Number(currentStudent.studentNum) &&
+          String(s.name || '').trim() === String(currentStudent.name || '').trim())
+      ) || {
         id: `sub-${currentStudent.id}`,
         grade: currentStudent.grade,
         classNum: currentStudent.classNum,
@@ -156,7 +171,13 @@ export default function App() {
       if (gasData) {
         // Cache data loaded from Sheets without sending another write request.
         const cached = loadSubmissions();
-        const existingIndex = cached.findIndex(item => item.id === gasData.id);
+        const existingIndex = cached.findIndex(item =>
+          item.id === gasData.id ||
+          (Number(item.grade || 2) === Number(gasData.grade || 2) &&
+            Number(item.classNum) === Number(gasData.classNum) &&
+            Number(item.studentNum) === Number(gasData.studentNum) &&
+            String(item.name || '').trim() === String(gasData.name || '').trim())
+        );
         const updatedSubs = existingIndex >= 0
           ? cached.map((item, index) => index === existingIndex ? gasData : item)
           : [...cached, gasData];
