@@ -15,6 +15,10 @@
       "destination": "/api/admin/logout"
     },
     {
+      "source": "/api/admin/dashboard",
+      "destination": "/api/admin/dashboard"
+    },
+    {
       "source": "/api/student/login",
       "destination": "/api/student/login"
     },
