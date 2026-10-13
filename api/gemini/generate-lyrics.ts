@@ -1,4 +1,3 @@
-import { GoogleGenAI } from "@google/genai";
 import { readRequestBody, rejectInvalidOrigin, setPrivateJsonHeaders } from "../_lib/http.js";
 import { requestGas, GasRequestError } from "../_lib/gas.js";
 import { getStudentSession } from "../_lib/session.js";
@@ -60,15 +59,6 @@ export default async function handler(req: any, res: any) {
       return res.status(429).json({ error: '가사 생성은 학생별로 30분 동안 10회까지 가능합니다. 잠시 후 다시 시도해 주세요.' });
     }
 
-    const ai = new GoogleGenAI({
-      apiKey: apiKey,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
-      },
-    });
-
     const systemInstruction = `너는 중학교 과학 수행평가 가사 작사 AI이다. 
 학생이 입력한 학습 내용, 핵심 단어, 프롬프트를 바탕으로 노래 제목과 노래 가사를 함께 작성하라.
 
@@ -96,22 +86,34 @@ export default async function handler(req: any, res: any) {
 위 정보를 바탕으로 [제목: 노래 제목] 및 [Verse 1] - [Chorus] - [Verse 2] - [Chorus] - [Outro] 구조의 완성도 높은 노래 가사를 작성해 줘.
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents: userPrompt,
-      config: {
-        systemInstruction,
-        temperature: 0.8,
-      },
+    // Use the HTTP response directly so Retry-After survives the provider boundary.
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+        systemInstruction: { parts: [{ text: systemInstruction }] },
+        generationConfig: { temperature: 0.8 },
+      }),
+      signal: AbortSignal.timeout(30_000),
     });
-
-    const lyrics = response.text || "가사 생성 결과가 없습니다.";
+    if (!response.ok) {
+      if ([429, 503].includes(response.status)) res.setHeader('Retry-After', response.headers.get('Retry-After') || '2');
+      return res.status(response.status).json({ error: '가사 생성 서버가 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.' });
+    }
+    const result = await response.json();
+    const lyrics = result?.candidates?.[0]?.content?.parts?.map((part: any) => part.text || '').join('');
+    if (!lyrics) return res.status(502).json({ error: '가사 생성 결과가 없습니다. 다시 시도해 주세요.' });
 
     return res.status(200).json({ lyrics });
   } catch (error: any) {
-    console.error("Gemini API generation error:", error);
-    return res.status(error instanceof GasRequestError ? error.status : 500).json({
-      error: error?.message || "Gemini API 가사 생성 중 오류가 발생했습니다.",
-    });
+    const status = error instanceof GasRequestError ? error.status : Number(error?.status) || 500;
+    if ([429, 503].includes(status)) {
+      const retryAfter = error?.headers?.get?.('retry-after') || error?.response?.headers?.get?.('retry-after');
+      res.setHeader('Retry-After', retryAfter || '2');
+    }
+    // Provider errors may contain request contents or credentials. Never log/return them.
+    console.error('Gemini generation failed', { status });
+    return res.status(status).json({ error: '가사 생성 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.' });
   }
 }

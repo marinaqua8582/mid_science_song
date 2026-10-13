@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import { fetchWithRetry } from '../utils/retry';
+import React, { useState, useEffect, useRef } from 'react';
 import { Step1Data, Step2Data } from '../types';
 import { Music, Sparkles, Loader2, ArrowRight, ArrowLeft, Wand2, Copy, Check, MessageSquareCode } from 'lucide-react';
 
@@ -42,12 +43,15 @@ export const Step2PromptBuilder: React.FC<Props> = ({
   const [errorText, setErrorText] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
 
+  const generationRef = useRef(false);
   const handleGenerateLyrics = async () => {
+    if (generationRef.current) return;
+    generationRef.current = true;
     setIsLoading(true);
     setErrorText('');
 
     try {
-      const response = await fetch('/api/gemini/generate-lyrics', {
+      const response = await fetchWithRetry('/api/gemini/generate-lyrics', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -59,7 +63,7 @@ export const Step2PromptBuilder: React.FC<Props> = ({
           situationPrompt,
           customPrompt
         })
-      });
+      }, [429, 503]);
 
       const contentType = response.headers.get('content-type') || '';
       let resData: any = {};
@@ -76,9 +80,10 @@ export const Step2PromptBuilder: React.FC<Props> = ({
 
       setGeneratedLyrics(resData.lyrics);
     } catch (err: any) {
-      console.error('Gemini lyrics error:', err);
+
       setErrorText(err.message || '가사 생성 중 오류가 발생했습니다. 다시 시도해주세요.');
     } finally {
+      generationRef.current = false;
       setIsLoading(false);
     }
   };

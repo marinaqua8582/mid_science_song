@@ -68,7 +68,7 @@ export async function requestGas(
       try {
         return await requestGasOnce(action, options, Math.min(REQUEST_TIMEOUT_MS, remaining));
       } catch (error) {
-        if (!(error instanceof GasRequestError) || ![502, 504].includes(error.status) || attempt === 2) throw error;
+        if (!(error instanceof GasRequestError) || ![502, 503, 504].includes(error.status) || attempt === 2) throw error;
       }
     }
   })();
@@ -139,13 +139,13 @@ async function requestGasOnce(
         responsePath,
         bodyLength: responseText.length,
       });
-      throw new GasRequestError('Google Apps Script가 올바른 JSON 응답을 보내지 않았습니다.');
+      throw new GasRequestError('Google Apps Script가 올바른 JSON 응답을 보내지 않았습니다.', response.ok ? 502 : response.status);
     }
 
     if (!response.ok || data?.status === 'error') {
       throw new GasRequestError(
         data?.message || `Google Apps Script 요청에 실패했습니다. (${response.status})`,
-        response.ok ? 400 : 502,
+        response.ok ? (data?.code === 'LOCK_TIMEOUT' ? 503 : data?.code === 'LOGIN_RATE_LIMIT' ? 429 : 400) : ([502, 503, 504].includes(response.status) ? response.status : 400),
       );
     }
     return data;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   AppSettings, StudentRosterItem, StudentSubmission,
   Step1Data, Step2Data, Step3Data, Step4Data, StudentAccessStatus
@@ -40,6 +40,18 @@ const formatAccessDate = (value: string) => {
 };
 
 export default function App() {
+  const savingRef = useRef(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState('');
+  useEffect(() => {
+    const listener = (event: Event) => setLastSavedAt((event as CustomEvent<string>).detail);
+    window.addEventListener('submission-saved', listener);
+    return () => window.removeEventListener('submission-saved', listener);
+  }, []);
+  const saveConfirmed = async (submission: StudentSubmission) => {
+    await updateSingleSubmission(submission);
+  };
+
   const [settings, setSettings] = useState<AppSettings>(getDefaultSettings());
   const [roster, setRoster] = useState<StudentRosterItem[]>([]);
   const [submissions, setSubmissions] = useState<StudentSubmission[]>([]);
@@ -219,6 +231,8 @@ export default function App() {
 
   // Student Logout
   const handleStudentLogout = () => {
+    if (savingRef.current) return;
+    setLastSavedAt('');
     setCurrentStudent(null);
     setActiveStep(1);
     void logoutStudent();
@@ -240,14 +254,20 @@ export default function App() {
       updatedAt: new Date().toLocaleString('ko-KR')
     };
 
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setIsSaving(true);
     try {
-      await updateSingleSubmission(updated);
+      await saveConfirmed(updated);
       setSubmissions(prev => prev.some(item => item.id === updated.id)
         ? prev.map(item => item.id === updated.id ? updated : item)
         : [...prev, updated]);
       if (moveNext) setActiveStep(2);
     } catch (error: any) {
       alert(error?.message || '1단계 내용을 저장하지 못했습니다. 다시 시도해 주세요.');
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
     }
   };
 
@@ -267,14 +287,20 @@ export default function App() {
       updatedAt: new Date().toLocaleString('ko-KR')
     };
 
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setIsSaving(true);
     try {
-      await updateSingleSubmission(updated);
+      await saveConfirmed(updated);
       setSubmissions(prev => prev.some(item => item.id === updated.id)
         ? prev.map(item => item.id === updated.id ? updated : item)
         : [...prev, updated]);
       if (moveNext) setActiveStep(3);
     } catch (error: any) {
       alert(error?.message || '2단계 내용을 저장하지 못했습니다. 다시 시도해 주세요.');
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
     }
   };
 
@@ -292,14 +318,20 @@ export default function App() {
       updatedAt: new Date().toLocaleString('ko-KR')
     };
 
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setIsSaving(true);
     try {
-      await updateSingleSubmission(updated);
+      await saveConfirmed(updated);
       setSubmissions(prev => prev.some(item => item.id === updated.id)
         ? prev.map(item => item.id === updated.id ? updated : item)
         : [...prev, updated]);
       if (moveNext) setActiveStep(4);
     } catch (error: any) {
       alert(error?.message || '3단계 내용을 저장하지 못했습니다. 다시 시도해 주세요.');
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
     }
   };
 
@@ -314,8 +346,11 @@ export default function App() {
       updatedAt: new Date().toLocaleString('ko-KR')
     };
 
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setIsSaving(true);
     try {
-      await updateSingleSubmission(updated);
+      await saveConfirmed(updated);
       setSubmissions(prev => prev.some(item => item.id === updated.id)
         ? prev.map(item => item.id === updated.id ? updated : item)
         : [...prev, updated]);
@@ -324,6 +359,9 @@ export default function App() {
       }
     } catch (error: any) {
       alert(error?.message || '최종 제출에 실패했습니다. 다시 시도해 주세요.');
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
     }
   };
 
@@ -386,7 +424,13 @@ export default function App() {
       </header>
 
       {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+      <main onClickCapture={(event) => { if (savingRef.current) { event.preventDefault(); event.stopPropagation(); } }} className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+        {appMode === 'student' && currentStudent && (
+          <p role="status" className="text-sm text-slate-600 mb-3">
+            {isSaving ? '서버에 저장 중입니다…' : lastSavedAt ? `마지막 서버 저장 성공: ${new Date(lastSavedAt).toLocaleString('ko-KR')}` : '아직 서버에 저장하지 않았습니다.'}
+          </p>
+        )}
+        <fieldset disabled={isSaving} className="contents">
         {appMode === 'student' ? (
           <div className="space-y-6">
             {accessError ? (
@@ -820,6 +864,7 @@ export default function App() {
             onUpdateSubmissions={setSubmissions}
           />
         )}
+        </fieldset>
       </main>
 
       {/* Footer */}

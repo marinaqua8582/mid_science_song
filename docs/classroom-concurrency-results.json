@@ -1,0 +1,160 @@
+{
+  "browserTested": true,
+  "environment": "Local HTTP handlers + actual Code.gs in synchronous VM; synthetic Sheets; fixed 2ms transport, no real Google/Vercel latency",
+  "students": 25,
+  "metrics": [
+    {
+      "scenario": "첫 화면 HTML + 공개 bootstrap 25명",
+      "successful": 25,
+      "total": 25,
+      "successRate": "100%",
+      "p50Ms": 90.85,
+      "p95Ms": 92.04,
+      "maxMs": 109.52
+    },
+    {
+      "scenario": "동일 IP 로그인 25명",
+      "successful": 25,
+      "total": 25,
+      "successRate": "100%",
+      "p50Ms": 200.33,
+      "p95Ms": 366.22,
+      "maxMs": 381
+    },
+    {
+      "scenario": "1단계 동시 저장 25명",
+      "successful": 25,
+      "total": 25,
+      "successRate": "100%",
+      "p50Ms": 195.46,
+      "p95Ms": 348.16,
+      "maxMs": 363.52
+    },
+    {
+      "scenario": "2단계 동시 저장 25명",
+      "successful": 25,
+      "total": 25,
+      "successRate": "100%",
+      "p50Ms": 198.17,
+      "p95Ms": 363.85,
+      "maxMs": 379.07
+    },
+    {
+      "scenario": "3단계 동시 저장 25명",
+      "successful": 25,
+      "total": 25,
+      "successRate": "100%",
+      "p50Ms": 181.53,
+      "p95Ms": 348.61,
+      "maxMs": 363.79
+    },
+    {
+      "scenario": "최종 제출 25명",
+      "successful": 25,
+      "total": 25,
+      "successRate": "100%",
+      "p50Ms": 196.18,
+      "p95Ms": 349.25,
+      "maxMs": 350.58
+    },
+    {
+      "scenario": "과거 requestId 재전송 25명",
+      "successful": 25,
+      "total": 25,
+      "successRate": "100%",
+      "p50Ms": 191.71,
+      "p95Ms": 360.42,
+      "maxMs": 375.53
+    },
+    {
+      "scenario": "브라우저 첫 화면 25명",
+      "successful": 25,
+      "total": 25,
+      "successRate": "100%",
+      "p50Ms": 5289.37,
+      "p95Ms": 5311.3,
+      "maxMs": 5311.84
+    },
+    {
+      "scenario": "브라우저 로그인 25명",
+      "successful": 25,
+      "total": 25,
+      "successRate": "100%",
+      "p50Ms": 4177.94,
+      "p95Ms": 4210.5,
+      "maxMs": 4212.49
+    },
+    {
+      "scenario": "브라우저 1단계 저장 25명",
+      "successful": 25,
+      "total": 25,
+      "successRate": "100%",
+      "p50Ms": 1567.02,
+      "p95Ms": 1589.95,
+      "maxMs": 1597.07
+    },
+    {
+      "scenario": "브라우저 Gemini 중복 클릭 25명",
+      "successful": 25,
+      "total": 25,
+      "successRate": "100%",
+      "p50Ms": 1043.44,
+      "p95Ms": 1109.07,
+      "maxMs": 1118.42
+    },
+    {
+      "scenario": "브라우저 2단계 저장 25명",
+      "successful": 25,
+      "total": 25,
+      "successRate": "100%",
+      "p50Ms": 1079.44,
+      "p95Ms": 1327.89,
+      "maxMs": 1356.3
+    },
+    {
+      "scenario": "브라우저 3단계 저장 25명",
+      "successful": 25,
+      "total": 25,
+      "successRate": "100%",
+      "p50Ms": 1273.88,
+      "p95Ms": 1576.55,
+      "maxMs": 1587.73
+    },
+    {
+      "scenario": "브라우저 최종 제출 25명",
+      "successful": 25,
+      "total": 25,
+      "successRate": "100%",
+      "p50Ms": 1773.25,
+      "p95Ms": 1828.65,
+      "maxMs": 1829.1
+    }
+  ],
+  "duplicateRows": 0,
+  "missingRows": 0,
+  "otherStudentOverwrites": 0,
+  "warmCounters": {
+    "rosterReads": 2,
+    "listSheets": 1,
+    "indexReads": 0,
+    "writes": 102
+  },
+  "providerCalls": 28,
+  "regressionChecks": [
+    "canonical + legacy",
+    "private roster cache and mutation invalidation",
+    "cache eviction and sorted rows",
+    "request replay after newer save",
+    "requestId payload conflict",
+    "lock timeout 503",
+    "lost response retry idempotency",
+    "unauthenticated write rejection",
+    "student identity repeated attempts",
+    "Gemini Retry-After 429/503",
+    "bounded exponential retry and nonretryable statuses",
+    "journal eviction replay rejection",
+    "edit/change/delete/replace cache invalidation",
+    "protected existing extra column",
+    "25 isolated browser sessions and failed-save navigation guard"
+  ]
+}

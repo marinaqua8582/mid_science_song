@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { requestGas, GasRequestError } from '../_lib/gas.js';
 import { readRequestBody, rejectInvalidOrigin, requestIp, setPrivateJsonHeaders } from '../_lib/http.js';
 import { consumeRateLimit } from '../_lib/rate-limit.js';
@@ -14,7 +15,7 @@ export default async function handler(req: any, res: any) {
     return res.status(503).json({ status: 'error', message: '학생 로그인 보안 설정이 아직 완료되지 않았습니다.' });
   }
 
-  const rate = consumeRateLimit(`student-login:${requestIp(req)}`, 20, 10 * 60 * 1000);
+  const rate = consumeRateLimit(`student-login:${requestIp(req)}`, 120, 10 * 60 * 1000);
   if (!rate.allowed) {
     res.setHeader('Retry-After', String(rate.retryAfterSeconds));
     return res.status(429).json({ status: 'error', message: '로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.' });
@@ -38,6 +39,13 @@ export default async function handler(req: any, res: any) {
     const name = String(body.name || '').trim().slice(0, 100);
     if (!classNum || !studentNum || !name) {
       return res.status(400).json({ status: 'error', message: '학년, 반, 번호, 이름을 모두 입력해 주세요.' });
+    }
+
+    const identity = createHash('sha256').update(`${grade}:${classNum}:${studentNum}`).digest('hex');
+    const identityRate = consumeRateLimit(`student-identity:${identity}`, 10, 10 * 60 * 1000);
+    if (!identityRate.allowed) {
+      res.setHeader('Retry-After', String(identityRate.retryAfterSeconds));
+      return res.status(429).json({ status: 'error', message: '같은 학생의 로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.' });
     }
 
     const result = await requestGas('verifyStudent', {

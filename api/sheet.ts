@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { GasRequestError, requestGas } from './_lib/gas.js';
 import { readRequestBody, rejectInvalidOrigin, setPrivateJsonHeaders } from './_lib/http.js';
 import { getAdminSession, getStudentSession } from './_lib/session.js';
@@ -47,7 +48,7 @@ function requestStudentPayload(session: any): Record<string, any> {
 
 function studentSubmissionPayload(body: any, session: any): Record<string, any> {
   const source = body?.data && typeof body.data === 'object' ? body.data : body;
-  const safe = { ...source, ...requestStudentPayload(session) };
+  const safe = { ...source, ...requestStudentPayload(session), requestId: source.requestId || `${Date.now()}_${randomUUID()}` };
 
   // 학생 요청으로 교사 점수나 피드백을 변경할 수 없도록 평가 필드를 제거합니다.
   delete safe.action;
@@ -117,7 +118,7 @@ export default async function handler(req: any, res: any) {
     if (STUDENT_WRITE_ACTIONS.has(action)) {
       if (admin) {
         const source = body?.data && typeof body.data === 'object' ? body.data : body;
-        const data = await requestGas(action, { method: 'POST', payload: { data: source } });
+        const data = await requestGas(action, { method: 'POST', payload: { data: { ...source, requestId: source.requestId || `${Date.now()}_${randomUUID()}` } } });
         return res.status(200).json(data);
       }
 

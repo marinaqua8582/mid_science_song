@@ -54,5 +54,16 @@
       "source": "/(.*)",
       "destination": "/index.html"
     }
-  ]
+  ],
+  "functions": {
+    "api/sheet.ts": {
+      "maxDuration": 30
+    },
+    "api/student/login.ts": {
+      "maxDuration": 30
+    },
+    "api/gemini/generate-lyrics.ts": {
+      "maxDuration": 45
+    }
+  }
 }

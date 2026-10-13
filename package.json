@@ -10,7 +10,8 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "hash-password": "node scripts/hash-password.mjs",
-    "generate-secrets": "node scripts/generate-secrets.mjs"
+    "generate-secrets": "node scripts/generate-secrets.mjs",
+    "test:classroom": "tsx tests/classroom-concurrency.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

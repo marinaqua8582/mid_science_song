@@ -1,3 +1,4 @@
+import { fetchWithRetry } from './retry';
 import { AppSettings, StudentRosterItem, StudentSubmission } from '../types';
 import { DEFAULT_ROSTER, DEFAULT_RUBRICS } from '../data/units';
 
@@ -424,6 +425,7 @@ export async function fetchStudentGoogleIdFromGAS(
 
 export interface FormSubmissionPayload {
   action?: string;
+  requestId: string;
   id: string;
   grade: number;
   classNum: number;
@@ -460,6 +462,7 @@ export function buildSubmissionPayload(submission: StudentSubmission): FormSubmi
 
   return {
     action: 'saveSubmission',
+    requestId: `${Date.now()}_${crypto.randomUUID()}`,
     id: submission.id,
     grade: submission.grade,
     classNum: submission.classNum,
@@ -610,11 +613,15 @@ export async function updateSingleSubmission(submission: StudentSubmission): Pro
 
 export async function syncSubmissionToGAS(submission: StudentSubmission): Promise<void> {
   const bodyData = buildSubmissionPayload(submission);
-  const apiRes = await fetch('/api/sheet', {
+  const apiRes = await fetchWithRetry('/api/sheet', {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(bodyData),
-  });
-  await readApiJson(apiRes);
+  }, [502, 503, 504]);
+  const confirmation = await readApiJson(apiRes);
+  if (confirmation?.status !== 'success' || confirmation.requestId !== bodyData.requestId || !confirmation.savedAt) {
+    throw new Error('서버 저장 확인을 받지 못했습니다. 다시 시도해 주세요.');
+  }
+  window.dispatchEvent(new CustomEvent('submission-saved', { detail: confirmation.savedAt }));
 }

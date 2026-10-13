@@ -69,7 +69,7 @@ function doGet(e) {
 
     return responseJSON({ status: 'error', message: 'Invalid read action' });
   } catch (err) {
-    return responseJSON({ status: 'error', message: err.toString() });
+    return responseJSON({ status: 'error', message: err.toString(), code: err.code || '' });
   }
 }
 
@@ -127,7 +127,7 @@ function doPost(e) {
 
     return responseJSON({ status: 'error', message: 'Invalid action' });
   } catch (err) {
-    return responseJSON({ status: 'error', message: err.toString() });
+    return responseJSON({ status: 'error', message: err.toString(), code: err.code || '' });
   }
 }
 
@@ -159,7 +159,7 @@ function getPublicRoster_() {
     var studentNum = Number(rows[i][3]);
     if (!classNum || !studentNum) continue;
     result.push({
-      id: String(rows[i][0] || makeSubmissionId_(grade, classNum, studentNum).replace(/^sub-/, '')),
+      id: makeSubmissionId_(grade, classNum, studentNum).replace(/^sub-/, ''),
       grade: grade,
       classNum: classNum,
       studentNum: studentNum
@@ -169,13 +169,80 @@ function getPublicRoster_() {
   return result;
 }
 
+// This cache is never returned by a public roster endpoint; Google IDs are excluded.
+function getPrivateRoster_() {
+  var cache = CacheService.getScriptCache();
+  var raw = cache.get('privateRoster:v1');
+  if (raw) return JSON.parse(raw);
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(8000)) { var busy = new Error('Roster cache busy'); busy.code = 'LOCK_TIMEOUT'; throw busy; }
+  try {
+    raw = cache.get('privateRoster:v1');
+    if (raw) return JSON.parse(raw);
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(ROSTER_SHEET_NAME);
+    var rows = !sheet || sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, 5).getValues();
+    cache.put('privateRoster:v1', JSON.stringify(rows), 300);
+    return rows;
+  } finally { lock.releaseLock(); }
+}
+
+function invalidateRosterCache_() {
+  CacheService.getScriptCache().removeAll(['publicRoster', 'privateRoster:v1']);
+}
+
+// Install as an edit trigger if teachers edit Roster directly in Sheets.
+function invalidateClassroomCachesOnEdit(e) {
+  if (!e || !e.range) return;
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    if (e.range.getSheet().getName() === ROSTER_SHEET_NAME) invalidateRosterCache_();
+    CacheService.getScriptCache().remove('activeSubmissionSheet:v1');
+    CacheService.getScriptCache().remove('submissionIndex:' + e.range.getSheet().getSheetId());
+    CacheService.getScriptCache().remove('submissionFormat:' + e.range.getSheet().getSheetId());
+  } finally { lock.releaseLock(); }
+}
+
+// Install a spreadsheet change trigger as well, covering inserted/deleted rows/tabs.
+function invalidateClassroomCachesOnChange(e) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    invalidateRosterCache_();
+    var cache = CacheService.getScriptCache();
+    cache.remove('activeSubmissionSheet:v1');
+    var sheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
+    for (var i = 0; i < sheets.length; i++) {
+      cache.remove('submissionIndex:' + sheets[i].getSheetId());
+      cache.remove('submissionFormat:' + sheets[i].getSheetId());
+    }
+  } finally { lock.releaseLock(); }
+}
+
+// Shared across Vercel instances; no names or Google IDs in quota keys.
+function consumeStudentLoginQuota_(query) {
+  var key = 'studentLogin:' + makeSubmissionId_(query.grade, query.classNum, query.studentNum);
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(8000)) return { allowed: false, busy: true };
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var raw = props.getProperty(key);
+    var bucket = raw ? JSON.parse(raw) : null;
+    var now = Date.now();
+    if (!bucket || bucket.until <= now) bucket = { count: 0, until: now + 600000 };
+    if (bucket.count >= 10) return { allowed: false, retryAfterSeconds: Math.ceil((bucket.until - now) / 1000) };
+    bucket.count++;
+    props.setProperty(key, JSON.stringify(bucket));
+    return { allowed: true };
+  } finally { lock.releaseLock(); }
+}
+
 function verifyStudentResponse_(query) {
   query = query || {};
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(ROSTER_SHEET_NAME);
-  if (!sheet || sheet.getLastRow() < 2) return { status: 'success', found: false };
-
-  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), 6)).getValues();
+  var rate = consumeStudentLoginQuota_(query);
+  if (rate.busy) return { status: 'error', code: 'LOCK_TIMEOUT', message: '로그인 확인 요청이 많습니다. 잠시 후 다시 시도해 주세요.' };
+  if (!rate.allowed) return { status: 'error', code: 'LOGIN_RATE_LIMIT', message: '같은 학생의 로그인 시도가 너무 많습니다.', retryAfterSeconds: rate.retryAfterSeconds };
+  var rows = getPrivateRoster_();
   var targetGrade = Number(query.grade) || 2;
   var targetClass = Number(query.classNum);
   var targetNum = Number(query.studentNum);
@@ -324,7 +391,7 @@ function saveRoster_(roster) {
       ]);
     }
     if (rows.length) sheet.getRange(2, 1, rows.length, 6).setValues(rows);
-    CacheService.getScriptCache().remove('publicRoster');
+    invalidateRosterCache_();
     return { status: 'success', count: rows.length };
   } finally {
     lock.releaseLock();
@@ -393,7 +460,7 @@ function upsertRosterStudent_(student) {
       ]);
       targetRow = sheet.getLastRow();
     }
-    CacheService.getScriptCache().remove('publicRoster');
+    invalidateRosterCache_();
     return { status: 'success', row: targetRow };
   } finally {
     lock.releaseLock();
@@ -414,7 +481,7 @@ function deleteRosterStudent_(student) {
           Number(rows[i][2]) === Number(student.classNum) &&
           Number(rows[i][3]) === Number(student.studentNum)) {
         sheet.deleteRow(i + 2);
-        CacheService.getScriptCache().remove('publicRoster');
+        invalidateRosterCache_();
         return { status: 'success', deleted: true };
       }
     }
@@ -430,6 +497,10 @@ function normalizeName_(value) {
 
 function getSubmissionSheet_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var cache = CacheService.getScriptCache();
+  var cachedName = cache.get('activeSubmissionSheet:v1');
+  var cachedSheet = cachedName && ss.getSheetByName(cachedName);
+  if (cachedSheet) return cachedSheet;
   var named = ss.getSheetByName(SUBMISSIONS_SHEET_NAME);
   var sheets = ss.getSheets();
   var bestSheet = null;
@@ -456,7 +527,9 @@ function getSubmissionSheet_() {
     }
   }
 
-  return bestSheet || named || ss.insertSheet(SUBMISSIONS_SHEET_NAME);
+  var selected = bestSheet || named || ss.insertSheet(SUBMISSIONS_SHEET_NAME);
+  cache.put('activeSubmissionSheet:v1', selected.getName(), 300);
+  return selected;
 }
 
 function countValidSubmissionRows_(sheet, isLegacy) {
@@ -551,7 +624,7 @@ function findStudentResponse_(query) {
 }
 
 function saveSubmission_(data) {
-  data = data || {};
+  data = Object.assign({}, data || {});
   var grade = Number(data.grade) || 2;
   var classNum = Number(data.classNum);
   var studentNum = Number(data.studentNum);
@@ -562,27 +635,93 @@ function saveSubmission_(data) {
     return { status: 'error', message: '반, 번호, 이름이 모두 있어야 저장할 수 있습니다.' };
   }
 
+  var requestId = String(data.requestId || '');
+  if (!/^[0-9]{13}_[a-zA-Z0-9_-]{16,80}$/.test(requestId)) return { status: 'error', message: 'Invalid requestId' };
+  var fingerprintData = JSON.parse(JSON.stringify(data));
+  delete fingerprintData.requestId;
+  var fingerprint = Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, JSON.stringify(fingerprintData)));
   var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  if (!lock.tryLock(8000)) return { status: 'error', code: 'LOCK_TIMEOUT', message: '저장 요청이 많습니다. 잠시 후 다시 시도해 주세요.' };
   try {
     var sheet = getSubmissionSheet_();
-    if (sheet.getLastRow() === 0) {
-      sheet.getRange(1, 1, 1, CANONICAL_HEADERS.length).setValues([CANONICAL_HEADERS]);
+    var cache = CacheService.getScriptCache();
+    var formatKey = 'submissionFormat:' + sheet.getSheetId();
+    var format = cache.get(formatKey);
+    if (!format) {
+      if (sheet.getLastRow() === 0) sheet.getRange(1, 1, 1, CANONICAL_HEADERS.length).setValues([CANONICAL_HEADERS]);
+      var headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 20)).getValues()[0];
+      format = headers.indexOf('최종수정시각') >= 0 ? 'legacy' : 'canonical';
+      var journalHeader = sheet.getRange(1, format === 'legacy' ? 19 : 21).getValue();
+      if (journalHeader && journalHeader !== '_requestJournal') return { status: 'error', message: '저장 기록용 열에 기존 자료가 있습니다. 관리자 확인이 필요합니다.' };
+      sheet.getRange(1, format === 'legacy' ? 19 : 21).setValue('_requestJournal');
+      cache.put(formatKey, format, 300);
     }
-
-    var headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 20)).getValues()[0]
-      .map(function(value) { return String(value || '').trim(); });
-    var isLegacy = headers.indexOf('최종수정시각') >= 0;
-    return isLegacy
-      ? saveLegacySubmission_(sheet, data, grade, classNum, studentNum, name)
+    var legacy = format === 'legacy';
+    if (legacy && grade !== 2) return { status: 'error', message: 'Legacy sheet supports grade 2 only' };
+    var index = submissionIndex_(sheet, legacy, false);
+    var key = makeSubmissionId_(grade, classNum, studentNum);
+    var row = index.rows[key] || -1;
+    if (row > 0 && !submissionRowMatches_(sheet, row, legacy, key)) {
+      index = submissionIndex_(sheet, legacy, true);
+      row = index.rows[key] || -1;
+    }
+    var ledgerColumn = legacy ? 19 : 21;
+    var journal = { entries: [], cutoff: 0 };
+    if (row > 0) {
+      try { journal = JSON.parse(sheet.getRange(row, ledgerColumn).getValue() || '{"entries":[],"cutoff":0}'); } catch (invalidJournal) { return { status: 'error', message: '저장 기록을 읽지 못했습니다. 관리자 확인이 필요합니다.' }; }
+    }
+    if (!journal || !Array.isArray(journal.entries) || typeof journal.cutoff !== 'number') return { status: 'error', message: 'Invalid request journal' };
+    var ledger = journal.entries;
+    for (var i = 0; i < ledger.length; i++) {
+      if (ledger[i].id === requestId) {
+        if (ledger[i].hash !== fingerprint) return { status: 'error', message: 'requestId payload mismatch' };
+        return { status: 'success', row: row, requestId: requestId, savedAt: ledger[i].at, duplicate: true };
+      }
+    }
+    var issuedAt = Number(requestId.split('_')[0]);
+    if (issuedAt <= journal.cutoff) return { status: 'error', message: '이전 저장 요청입니다. 현재 내용을 새로 저장해 주세요.' };
+    var savedAt = new Date().toISOString();
+    // Commit journal with the row. A durable watermark rejects replay of evicted IDs.
+    ledger.push({ id: requestId, hash: fingerprint, at: savedAt });
+    while (ledger.length > 100) journal.cutoff = Math.max(journal.cutoff, Number(ledger.shift().id.split('_')[0]));
+    data._ledger = JSON.stringify(journal);
+    data._targetRow = row;
+    var result = legacy ? saveLegacySubmission_(sheet, data, grade, classNum, studentNum, name)
       : saveCanonicalSubmission_(sheet, data, grade, classNum, studentNum, name);
-  } finally {
-    lock.releaseLock();
+    SpreadsheetApp.flush();
+    index.rows[key] = result.row;
+    index.lastRow = sheet.getLastRow();
+    try { cache.put('submissionIndex:' + sheet.getSheetId(), JSON.stringify(index), 300); } catch (ignoreCacheSize) {}
+    result.requestId = requestId;
+    result.savedAt = savedAt;
+    return result;
+  } finally { lock.releaseLock(); }
+}
+
+function submissionRowMatches_(sheet, row, legacy, key) {
+  if (row > sheet.getLastRow()) return false;
+  var cells = sheet.getRange(row, 1, 1, 4).getValues()[0];
+  return (legacy ? makeSubmissionId_(2, cells[1], cells[2]) : makeSubmissionId_(cells[1], cells[2], cells[3])) === key;
+}
+
+function submissionIndex_(sheet, legacy, force) {
+  var cache = CacheService.getScriptCache();
+  var raw = !force && cache.get('submissionIndex:' + sheet.getSheetId());
+  var index = raw ? JSON.parse(raw) : null;
+  if (index && index.lastRow === sheet.getLastRow()) return index;
+  index = { lastRow: sheet.getLastRow(), rows: {} };
+  if (index.lastRow >= 2) {
+    var rows = sheet.getRange(2, 1, index.lastRow - 1, 4).getValues();
+    for (var i = 0; i < rows.length; i++) {
+      var key = legacy ? makeSubmissionId_(2, rows[i][1], rows[i][2]) : makeSubmissionId_(rows[i][1], rows[i][2], rows[i][3]);
+      if (!index.rows[key]) index.rows[key] = i + 2;
+    }
   }
+  return index;
 }
 
 function saveCanonicalSubmission_(sheet, data, grade, classNum, studentNum, name) {
-  var id = data.id || makeSubmissionId_(grade, classNum, studentNum);
+  var id = makeSubmissionId_(grade, classNum, studentNum);
   var evaluation = normalizeEvaluation_(data);
   var rowData = [
     id, grade, classNum, studentNum, name,
@@ -600,14 +739,15 @@ function saveCanonicalSubmission_(sheet, data, grade, classNum, studentNum, name
     data.submittedAt || data.updatedAt || new Date(),
     evaluation ? evaluation.totalScore : value_(data.score, data.totalScore),
     evaluation ? evaluation.feedback : value_(data.feedback, ''),
-    evaluation ? JSON.stringify(evaluation) : ''
+    evaluation ? JSON.stringify(evaluation) : '',
+    data._ledger
   ];
 
-  var targetRow = findCanonicalRow_(sheet, id, grade, classNum, studentNum, name);
+  var targetRow = data._targetRow;
   if (targetRow > 0) {
-    var existing = sheet.getRange(targetRow, 1, 1, CANONICAL_HEADERS.length).getValues()[0];
-    sheet.getRange(targetRow, 1, 1, CANONICAL_HEADERS.length).setValues([
-      mergeRows_(existing, rowData, [0, 1, 2, 3, 4, 15, 16])
+    var existing = sheet.getRange(targetRow, 1, 1, rowData.length).getValues()[0];
+    sheet.getRange(targetRow, 1, 1, rowData.length).setValues([
+      mergeRows_(existing, rowData, [0, 1, 2, 3, 4, 15, 16, 20])
     ]);
   } else {
     sheet.appendRow(rowData);
@@ -618,7 +758,7 @@ function saveCanonicalSubmission_(sheet, data, grade, classNum, studentNum, name
 
 function saveLegacySubmission_(sheet, data, grade, classNum, studentNum, name) {
   var extraHeaders = ['상태', '교사점수', '피드백', '평가상세(JSON)'];
-  sheet.getRange(1, 15, 1, extraHeaders.length).setValues([extraHeaders]);
+  if (sheet.getLastColumn() < 18) sheet.getRange(1, 15, 1, extraHeaders.length).setValues([extraHeaders]);
   var evaluation = normalizeEvaluation_(data);
   var rowData = [
     data.submittedAt || data.updatedAt || new Date(),
@@ -636,14 +776,15 @@ function saveLegacySubmission_(sheet, data, grade, classNum, studentNum, name) {
     data.status || inferStatus_(data.learningContent, data.aiLyrics, data.editedLyrics, data.sunoLink),
     evaluation ? evaluation.totalScore : value_(data.score, data.totalScore),
     evaluation ? evaluation.feedback : value_(data.feedback, ''),
-    evaluation ? JSON.stringify(evaluation) : ''
+    evaluation ? JSON.stringify(evaluation) : '',
+    data._ledger
   ];
 
-  var targetRow = findLegacyRow_(sheet, classNum, studentNum, name);
+  var targetRow = data._targetRow;
   if (targetRow > 0) {
     var existing = sheet.getRange(targetRow, 1, 1, rowData.length).getValues()[0];
     sheet.getRange(targetRow, 1, 1, rowData.length).setValues([
-      mergeRows_(existing, rowData, [0, 1, 2, 3, 14])
+      mergeRows_(existing, rowData, [0, 1, 2, 3, 14, 18])
     ]);
   } else {
     sheet.appendRow(rowData);
