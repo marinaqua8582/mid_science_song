@@ -143,9 +143,11 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({ status: 'error', message: '허용되지 않은 action입니다.' });
   } catch (error: any) {
     const status = error instanceof GasRequestError ? error.status : 500;
+    if (error instanceof GasRequestError && error.retryAfter) res.setHeader('Retry-After', String(error.retryAfter));
     return res.status(status).json({
       status: 'error',
-      message: error?.message || 'Google Sheets 연동 중 오류가 발생했습니다.',
+      code: error instanceof GasRequestError ? error.code : 'SAVE_FAILED',
+      message: error instanceof GasRequestError ? error.message : 'Google Sheets 연동 중 오류가 발생했습니다.',
     });
   }
 }

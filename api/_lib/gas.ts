@@ -4,11 +4,15 @@ const pendingReads = new Map<string, Promise<any>>();
 
 export class GasRequestError extends Error {
   status: number;
+  code: string;
+  retryAfter?: number;
 
-  constructor(message: string, status = 502) {
+  constructor(message: string, status = 502, code = 'GAS_UNAVAILABLE', retryAfter?: number) {
     super(message);
     this.name = 'GasRequestError';
     this.status = status;
+    this.code = code;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -143,9 +147,13 @@ async function requestGasOnce(
     }
 
     if (!response.ok || data?.status === 'error') {
+      const code = ['LOCK_TIMEOUT', 'LOGIN_RATE_LIMIT', 'STORAGE_NOT_READY', 'STORAGE_LAYOUT_CONFLICT', 'REQUEST_ID_CONFLICT'].includes(data?.code)
+        ? data.code : 'GAS_UNAVAILABLE';
       throw new GasRequestError(
-        data?.message || `Google Apps Script 요청에 실패했습니다. (${response.status})`,
+        code === 'LOCK_TIMEOUT' ? '저장 요청이 많습니다. 잠시 후 다시 시도해 주세요.' : 'Google Apps Script 요청을 완료하지 못했습니다.',
         response.ok ? (data?.code === 'LOCK_TIMEOUT' ? 503 : data?.code === 'LOGIN_RATE_LIMIT' ? 429 : 400) : ([502, 503, 504].includes(response.status) ? response.status : 400),
+        code,
+        code === 'LOCK_TIMEOUT' ? 1 : undefined,
       );
     }
     return data;
@@ -154,7 +162,7 @@ async function requestGasOnce(
     if (error?.name === 'AbortError') {
       throw new GasRequestError('Google Apps Script 응답 시간이 초과되었습니다.', 504);
     }
-    throw new GasRequestError(error?.message || 'Google Sheets 연동 중 오류가 발생했습니다.');
+    throw new GasRequestError('Google Sheets 연동 중 오류가 발생했습니다.');
   } finally {
     clearTimeout(timeout);
   }

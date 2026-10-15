@@ -100,12 +100,14 @@ try {
   // Cache eviction + row movement must recover without overwriting another student.
   harness.cache.clear(); harness.submission.rows = [harness.submission.rows[0], ...harness.submission.rows.slice(1).reverse()];
   const recover = payload(0, 4); recover.learningContent = '복구검증';
+  assert.equal((await request('/api/sheet', recover, cookies[0])).status, 400);
+  harness.submission.rows = [harness.submission.rows[0], ...harness.submission.rows.slice(1).reverse()];
   assert.equal((await request('/api/sheet', recover, cookies[0])).status, 200);
-  assert.equal(harness.submission.rows[25][6], '복구검증');
+  assert.equal(harness.submission.rows[1][6], '복구검증');
   const conflict = await request('/api/sheet', { ...recover, learningContent: '변조' }, cookies[0]); assert.equal(conflict.status, 400);
   // Lock timeout classification + bounded client retry with stable id.
   harness.rejectNextLock();
-  let res = await request('/api/sheet', payload(1, 4), cookies[1]); assert.equal(res.status, 503);
+  let res = await request('/api/sheet', payload(1, 4), cookies[1]); assert.equal(res.status, 503); assert.equal(res.headers.get('retry-after'), '1'); assert.equal((await res.json()).code, 'LOCK_TIMEOUT');
   loseSaveResponse = true;
   const replay = payload(2, 4);
   res = await fetchWithRetry(base + '/api/sheet', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookies[2] }, body: JSON.stringify(replay) }, [502, 503, 504]);
@@ -244,7 +246,7 @@ try {
   protectedColumns.submission.rows[0][20] = '기존 추가 자료';
   assert.equal(protectedColumns.context.saveSubmission_(payload(0, 1)).status, 'error');
   assert.equal(protectedColumns.submission.rows[0][20], '기존 추가 자료');
-  const report = { browserTested: process.env.RUN_BROWSER_TESTS === '1', environment: 'Local HTTP handlers + actual Code.gs in synchronous VM; synthetic Sheets; fixed 2ms transport, no real Google/Vercel latency', students: 25, metrics, duplicateRows: 0, missingRows: 0, otherStudentOverwrites: 0, warmCounters, providerCalls, regressionChecks: ['canonical + legacy', 'private roster cache and mutation invalidation', 'cache eviction and sorted rows', 'request replay after newer save', 'requestId payload conflict', 'lock timeout 503', 'lost response retry idempotency', 'unauthenticated write rejection', 'student identity repeated attempts', 'Gemini Retry-After 429/503', 'bounded exponential retry and nonretryable statuses', 'journal eviction replay rejection', 'edit/change/delete/replace cache invalidation', 'protected existing extra column', ...(process.env.RUN_BROWSER_TESTS === '1' ? ['25 isolated browser sessions and failed-save navigation guard'] : [])] };
+  const report = { browserTested: process.env.RUN_BROWSER_TESTS === '1', environment: 'Local HTTP handlers + actual Code.gs in synchronous VM; synthetic Sheets; fixed 2ms transport, no real Google/Vercel latency', students: 25, metrics, duplicateRows: 0, missingRows: 0, otherStudentOverwrites: 0, warmCounters, providerCalls, regressionChecks: ['canonical + legacy', 'private roster cache and mutation invalidation', 'cache eviction and fail-closed moved rows', 'request replay after newer save', 'requestId payload conflict', 'lock timeout 503', 'lost response retry idempotency', 'unauthenticated write rejection', 'student identity repeated attempts', 'Gemini Retry-After 429/503', 'bounded exponential retry and nonretryable statuses', 'journal eviction replay rejection', 'edit/change/delete/replace cache invalidation', 'protected existing extra column', ...(process.env.RUN_BROWSER_TESTS === '1' ? ['25 isolated browser sessions and failed-save navigation guard'] : [])] };
   mkdirSync('test-results', { recursive: true }); writeFileSync('test-results/classroom-concurrency.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 } finally { server.close(); globalThis.fetch = realFetch; }

@@ -497,6 +497,12 @@ function normalizeName_(value) {
 
 function getSubmissionSheet_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var prepared = PropertiesService.getScriptProperties().getProperty('submissionStorage:v2');
+  if (prepared) {
+    var pinned = ss.getSheetById(JSON.parse(prepared).sheetId);
+    if (!pinned) throw new Error('STORAGE_LAYOUT_CONFLICT');
+    return pinned;
+  }
   var cache = CacheService.getScriptCache();
   var cachedName = cache.get('activeSubmissionSheet:v1');
   var cachedSheet = cachedName && ss.getSheetByName(cachedName);
@@ -623,6 +629,93 @@ function findStudentResponse_(query) {
   return { status: 'success', found: false };
 }
 
+// Run once from the editor with traffic stopped, before publishing this version.
+// Existing submission rows and journals are preserved; duplicate identities abort setup.
+function prepareSubmissionStorage() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(8000)) throw new Error('LOCK_TIMEOUT');
+  try {
+    var props = PropertiesService.getScriptProperties();
+    if (props.getProperty('submissionStorage:v2')) return { status: 'success', alreadyPrepared: true };
+    var sheet = getSubmissionSheet_();
+    var lastRow = sheet.getLastRow();
+    var headers = lastRow ? sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 21)).getValues()[0] : CANONICAL_HEADERS.slice();
+    var legacy = headers.indexOf('최종수정시각') >= 0;
+    var column = legacy ? 19 : 21;
+    if (headers[column - 1] && headers[column - 1] !== '_requestJournal') throw new Error('STORAGE_LAYOUT_CONFLICT');
+    var rows = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, column).getValues() : [];
+    var records = {};
+    for (var i = 0; i < rows.length; i++) {
+      var cells = rows[i];
+      if (cells.every(function(v) { return v === ''; })) continue;
+      var grade = legacy ? 2 : Number(cells[1]);
+      var classNum = Number(cells[legacy ? 1 : 2]);
+      var num = Number(cells[legacy ? 2 : 3]);
+      if (!grade || !classNum || !num) throw new Error('STORAGE_INVALID_ROW');
+      var key = 'submissionOwner:v2:' + makeSubmissionId_(grade, classNum, num);
+      if (records[key]) throw new Error('STORAGE_DUPLICATE_ROW');
+      records[key] = JSON.stringify({ row: i + 2, owner: '' });
+    }
+    if (!lastRow) sheet.getRange(1, 1, 1, CANONICAL_HEADERS.length).setValues([CANONICAL_HEADERS]);
+    if (legacy) {
+      var extra = ['상태', '교사점수', '피드백', '평가상세(JSON)'];
+      for (var j = 0; j < extra.length; j++) if (headers[j + 14] && headers[j + 14] !== extra[j]) throw new Error('STORAGE_LAYOUT_CONFLICT');
+      sheet.getRange(1, 15, 1, 4).setValues([extra]);
+    }
+    sheet.getRange(1, column).setValue('_requestJournal');
+    SpreadsheetApp.flush();
+    props.setProperties(records);
+    props.setProperty('submissionNextRow:v2', String(Math.max(lastRow + 1, 2)));
+    // The readiness marker is committed last. No request path initializes sheets.
+    props.setProperty('submissionStorage:v2', JSON.stringify({ sheetId: sheet.getSheetId(), legacy: legacy }));
+    return { status: 'success', existingRows: rows.length };
+  } finally { lock.releaseLock(); }
+}
+
+function submissionBusy_() {
+  return { status: 'error', code: 'LOCK_TIMEOUT', retryAfter: 1, message: '저장 요청이 많습니다. 잠시 후 다시 시도해 주세요.' };
+}
+
+// This short global section performs PropertiesService operations only, never Sheets I/O.
+function claimSubmission_(key) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(8000)) return { error: submissionBusy_() };
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var raw = props.getProperty('submissionStorage:v2');
+    if (!raw) return { error: { status: 'error', code: 'STORAGE_NOT_READY', message: '저장소 초기 설정이 필요합니다.' } };
+    var storage = JSON.parse(raw);
+    var property = 'submissionOwner:v2:' + key;
+    var record = JSON.parse(props.getProperty(property) || 'null');
+    // Never steal an expired lease: an old execution could still write after a new owner.
+    // Hard-killed executions require operator reconciliation with traffic stopped.
+    if (record && record.owner) return { error: submissionBusy_() };
+    if (!record) {
+      var row = Number(props.getProperty('submissionNextRow:v2'));
+      if (!(row >= 2)) throw new Error('STORAGE_INVALID_COUNTER');
+      // Advance first. A crash may leave an unused row, but cannot allocate one row twice.
+      props.setProperty('submissionNextRow:v2', String(row + 1));
+      record = { row: row, owner: '' };
+    }
+    record.owner = Utilities.getUuid();
+    props.setProperty(property, JSON.stringify(record));
+    return { storage: storage, property: property, record: record };
+  } finally { lock.releaseLock(); }
+}
+
+function releaseSubmission_(claim) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(8000)) return false;
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var record = JSON.parse(props.getProperty(claim.property) || 'null');
+    if (!record || record.owner !== claim.record.owner) return false;
+    record.owner = '';
+    props.setProperty(claim.property, JSON.stringify(record));
+    return true;
+  } finally { lock.releaseLock(); }
+}
+
 function saveSubmission_(data) {
   data = Object.assign({}, data || {});
   var grade = Number(data.grade) || 2;
@@ -640,41 +733,34 @@ function saveSubmission_(data) {
   var fingerprintData = JSON.parse(JSON.stringify(data));
   delete fingerprintData.requestId;
   var fingerprint = Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, JSON.stringify(fingerprintData)));
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(8000)) return { status: 'error', code: 'LOCK_TIMEOUT', message: '저장 요청이 많습니다. 잠시 후 다시 시도해 주세요.' };
+  var key = makeSubmissionId_(grade, classNum, studentNum);
+  var claim = claimSubmission_(key);
+  if (claim.error) return claim.error;
+  var committed = false;
   try {
-    var sheet = getSubmissionSheet_();
-    var cache = CacheService.getScriptCache();
-    var formatKey = 'submissionFormat:' + sheet.getSheetId();
-    var format = cache.get(formatKey);
-    if (!format) {
-      if (sheet.getLastRow() === 0) sheet.getRange(1, 1, 1, CANONICAL_HEADERS.length).setValues([CANONICAL_HEADERS]);
-      var headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 20)).getValues()[0];
-      format = headers.indexOf('최종수정시각') >= 0 ? 'legacy' : 'canonical';
-      var journalHeader = sheet.getRange(1, format === 'legacy' ? 19 : 21).getValue();
-      if (journalHeader && journalHeader !== '_requestJournal') return { status: 'error', message: '저장 기록용 열에 기존 자료가 있습니다. 관리자 확인이 필요합니다.' };
-      sheet.getRange(1, format === 'legacy' ? 19 : 21).setValue('_requestJournal');
-      cache.put(formatKey, format, 300);
-    }
-    var legacy = format === 'legacy';
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetById(claim.storage.sheetId);
+    if (!sheet) return { status: 'error', code: 'STORAGE_LAYOUT_CONFLICT', message: '저장 시트를 확인해 주세요.' };
+    var legacy = claim.storage.legacy;
     if (legacy && grade !== 2) return { status: 'error', message: 'Legacy sheet supports grade 2 only' };
-    var index = submissionIndex_(sheet, legacy, false);
-    var key = makeSubmissionId_(grade, classNum, studentNum);
-    var row = index.rows[key] || -1;
-    if (row > 0 && !submissionRowMatches_(sheet, row, legacy, key)) {
-      index = submissionIndex_(sheet, legacy, true);
-      row = index.rows[key] || -1;
-    }
+    var row = claim.record.row;
+    if (row > sheet.getMaxRows()) return { status: 'error', code: 'STORAGE_LAYOUT_CONFLICT', message: '저장 시트의 행 용량을 확인해 주세요.' };
+    var width = legacy ? 19 : 21;
+    var existing = sheet.getRange(row, 1, 1, width).getValues()[0];
+    var actualKey = legacy ? makeSubmissionId_(2, existing[1], existing[2]) : makeSubmissionId_(existing[1], existing[2], existing[3]);
+    var empty = existing.every(function(v) { return v === ''; });
+    if (!empty && actualKey !== key) return { status: 'error', code: 'STORAGE_LAYOUT_CONFLICT', message: '저장 행이 이동되었습니다. 관리자 확인이 필요합니다.' };
+    var header = sheet.getRange(1, width).getValue();
+    if (header !== '_requestJournal') return { status: 'error', code: 'STORAGE_LAYOUT_CONFLICT', message: '저장 기록 열을 확인해 주세요.' };
     var ledgerColumn = legacy ? 19 : 21;
     var journal = { entries: [], cutoff: 0 };
     if (row > 0) {
-      try { journal = JSON.parse(sheet.getRange(row, ledgerColumn).getValue() || '{"entries":[],"cutoff":0}'); } catch (invalidJournal) { return { status: 'error', message: '저장 기록을 읽지 못했습니다. 관리자 확인이 필요합니다.' }; }
+      try { journal = JSON.parse(existing[ledgerColumn - 1] || '{"entries":[],"cutoff":0}'); } catch (invalidJournal) { return { status: 'error', message: '저장 기록을 읽지 못했습니다. 관리자 확인이 필요합니다.' }; }
     }
     if (!journal || !Array.isArray(journal.entries) || typeof journal.cutoff !== 'number') return { status: 'error', message: 'Invalid request journal' };
     var ledger = journal.entries;
     for (var i = 0; i < ledger.length; i++) {
       if (ledger[i].id === requestId) {
-        if (ledger[i].hash !== fingerprint) return { status: 'error', message: 'requestId payload mismatch' };
+        if (ledger[i].hash !== fingerprint) return { status: 'error', code: 'REQUEST_ID_CONFLICT', message: 'requestId payload mismatch' };
         return { status: 'success', row: row, requestId: requestId, savedAt: ledger[i].at, duplicate: true };
       }
     }
@@ -686,16 +772,22 @@ function saveSubmission_(data) {
     while (ledger.length > 100) journal.cutoff = Math.max(journal.cutoff, Number(ledger.shift().id.split('_')[0]));
     data._ledger = JSON.stringify(journal);
     data._targetRow = row;
+    data._existing = existing;
+    var writeStarted = true;
     var result = legacy ? saveLegacySubmission_(sheet, data, grade, classNum, studentNum, name)
       : saveCanonicalSubmission_(sheet, data, grade, classNum, studentNum, name);
+    // One row write contains both payload and durable journal. Flush while this student
+    // remains exclusively owned; unrelated students do not wait on this Sheets call.
     SpreadsheetApp.flush();
-    index.rows[key] = result.row;
-    index.lastRow = sheet.getLastRow();
-    try { cache.put('submissionIndex:' + sheet.getSheetId(), JSON.stringify(index), 300); } catch (ignoreCacheSize) {}
+    committed = true;
     result.requestId = requestId;
     result.savedAt = savedAt;
     return result;
-  } finally { lock.releaseLock(); }
+  } finally {
+    // If the write/flush throws, ownership remains fail-closed: do not risk releasing
+    // while an uncertain write can still commit. Operator reconciliation is required.
+    if (committed || !writeStarted) releaseSubmission_(claim);
+  }
 }
 
 function submissionRowMatches_(sheet, row, legacy, key) {
@@ -745,7 +837,7 @@ function saveCanonicalSubmission_(sheet, data, grade, classNum, studentNum, name
 
   var targetRow = data._targetRow;
   if (targetRow > 0) {
-    var existing = sheet.getRange(targetRow, 1, 1, rowData.length).getValues()[0];
+    var existing = data._existing || sheet.getRange(targetRow, 1, 1, rowData.length).getValues()[0];
     sheet.getRange(targetRow, 1, 1, rowData.length).setValues([
       mergeRows_(existing, rowData, [0, 1, 2, 3, 4, 15, 16, 20])
     ]);
@@ -758,7 +850,7 @@ function saveCanonicalSubmission_(sheet, data, grade, classNum, studentNum, name
 
 function saveLegacySubmission_(sheet, data, grade, classNum, studentNum, name) {
   var extraHeaders = ['상태', '교사점수', '피드백', '평가상세(JSON)'];
-  if (sheet.getLastColumn() < 18) sheet.getRange(1, 15, 1, extraHeaders.length).setValues([extraHeaders]);
+  // Legacy extra headers are provisioned once during prepareSubmissionStorage.
   var evaluation = normalizeEvaluation_(data);
   var rowData = [
     data.submittedAt || data.updatedAt || new Date(),
@@ -782,7 +874,7 @@ function saveLegacySubmission_(sheet, data, grade, classNum, studentNum, name) {
 
   var targetRow = data._targetRow;
   if (targetRow > 0) {
-    var existing = sheet.getRange(targetRow, 1, 1, rowData.length).getValues()[0];
+    var existing = data._existing || sheet.getRange(targetRow, 1, 1, rowData.length).getValues()[0];
     sheet.getRange(targetRow, 1, 1, rowData.length).setValues([
       mergeRows_(existing, rowData, [0, 1, 2, 3, 14, 18])
     ]);
