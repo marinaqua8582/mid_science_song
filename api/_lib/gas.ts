@@ -2,17 +2,30 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const READ_BUDGET_MS = 25_000;
 const pendingReads = new Map<string, Promise<any>>();
 
+export function safeStorageTiming(value: any): Record<string, number | string | boolean> | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const result: Record<string, number | string | boolean> = {};
+  for (const key of ['lockWaitMs', 'lockHoldMs', 'releaseMs']) {
+    if (typeof value[key] === 'number' && Number.isFinite(value[key]) && value[key] >= 0 && value[key] <= 360_000) result[key] = value[key];
+  }
+  if (['none', 'claim_lock', 'student_busy', 'release_property', 'write_uncertain'].includes(value.failureLocation)) result.failureLocation = value.failureLocation;
+  if (typeof value.reservedRow === 'boolean') result.reservedRow = value.reservedRow;
+  return result;
+}
+
 export class GasRequestError extends Error {
   status: number;
   code: string;
   retryAfter?: number;
+  storageTiming?: Record<string, number | string | boolean>;
 
-  constructor(message: string, status = 502, code = 'GAS_UNAVAILABLE', retryAfter?: number) {
+  constructor(message: string, status = 502, code = 'GAS_UNAVAILABLE', retryAfter?: number, storageTiming?: Record<string, number | string | boolean>) {
     super(message);
     this.name = 'GasRequestError';
     this.status = status;
     this.code = code;
     this.retryAfter = retryAfter;
+    this.storageTiming = storageTiming;
   }
 }
 
@@ -147,15 +160,17 @@ async function requestGasOnce(
     }
 
     if (!response.ok || data?.status === 'error') {
-      const code = ['LOCK_TIMEOUT', 'LOGIN_RATE_LIMIT', 'STORAGE_NOT_READY', 'STORAGE_LAYOUT_CONFLICT', 'REQUEST_ID_CONFLICT'].includes(data?.code)
+      const code = ['LOCK_TIMEOUT', 'LOGIN_RATE_LIMIT', 'STORAGE_NOT_READY', 'STORAGE_LAYOUT_CONFLICT', 'REQUEST_ID_CONFLICT', 'OWNERSHIP_RELEASE_FAILED', 'STORAGE_WRITE_UNCERTAIN'].includes(data?.code)
         ? data.code : 'GAS_UNAVAILABLE';
       throw new GasRequestError(
         code === 'LOCK_TIMEOUT' ? '저장 요청이 많습니다. 잠시 후 다시 시도해 주세요.' : 'Google Apps Script 요청을 완료하지 못했습니다.',
-        response.ok ? (data?.code === 'LOCK_TIMEOUT' ? 503 : data?.code === 'LOGIN_RATE_LIMIT' ? 429 : 400) : ([502, 503, 504].includes(response.status) ? response.status : 400),
+        response.ok ? (['LOCK_TIMEOUT', 'OWNERSHIP_RELEASE_FAILED', 'STORAGE_WRITE_UNCERTAIN'].includes(code) ? 503 : code === 'LOGIN_RATE_LIMIT' ? 429 : 400) : ([502, 503, 504].includes(response.status) ? response.status : 400),
         code,
-        code === 'LOCK_TIMEOUT' ? 1 : undefined,
+        ['LOCK_TIMEOUT', 'OWNERSHIP_RELEASE_FAILED', 'STORAGE_WRITE_UNCERTAIN'].includes(code) ? 1 : undefined,
+        safeStorageTiming(data?.storageTiming),
       );
     }
+    if (data?.storageTiming) data.storageTiming = safeStorageTiming(data.storageTiming);
     return data;
   } catch (error: any) {
     if (error instanceof GasRequestError) throw error;

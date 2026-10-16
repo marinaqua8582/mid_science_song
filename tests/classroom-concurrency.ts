@@ -222,7 +222,8 @@ try {
   // Policy checks: retry only named statuses, cap attempts, honor seconds/date headers.
   assert.ok(retryDelay('2', 0) >= 2000);
   assert.ok(retryDelay(new Date(Date.now() + 5000).toUTCString(), 0) >= 3500);
-  assert.ok(retryDelay(null, 2) >= 2000);
+  assert.ok(retryDelay(null, 2) >= 100 && retryDelay(null, 2) <= 2100);
+  assert.ok(new Set(Array.from({ length: 20 }, () => retryDelay('1', 0))).size > 1);
   const adapterFetch = globalThis.fetch;
   try {
     for (const status of [400, 401, 403, 409, 429, 500]) {

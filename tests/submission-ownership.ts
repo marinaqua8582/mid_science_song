@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createGasHarness } from './gas-harness';
+import { safeStorageTiming } from '../api/_lib/gas';
 const payload = (n: number) => ({ grade: 2, classNum: 99, studentNum: n, name: `synthetic-${n}`, requestId: `${Date.now()}_${randomUUID()}`, learningContent: `content-${n}`, status: 'step1' });
 for (const legacy of [false, true]) {
   const h = createGasHarness(legacy);
@@ -29,10 +30,36 @@ for (const legacy of [false, true]) {
   // An uncertain flush cannot surrender ownership or allow a second writer.
   h.hooks.flush = () => { throw Error('synthetic flush failure'); };
   const uncertain = payload(26);
-  assert.throws(() => h.context.saveSubmission_(uncertain));
+  assert.equal(h.context.saveSubmission_(uncertain).code, 'STORAGE_WRITE_UNCERTAIN');
   h.hooks.flush = null;
   assert.equal(h.context.saveSubmission_(uncertain).code, 'LOCK_TIMEOUT');
 }
+// Regression: a global-lock failure injected after flush must never strand ownership.
+const releaseRegression = createGasHarness();
+const stable = payload(1);
+releaseRegression.hooks.flush = () => releaseRegression.rejectNextLock();
+assert.equal(releaseRegression.context.saveSubmission_(stable).status, 'success');
+releaseRegression.hooks.flush = null;
+assert.equal(JSON.parse(releaseRegression.props.get('submissionOwner:v2:sub-2-99-01')!).owner, '');
+// The injected rejection is still pending, proving release made no global-lock attempt.
+assert.equal(releaseRegression.context.saveSubmission_(payload(1)).storageTiming.failureLocation, 'claim_lock');
+assert.equal(releaseRegression.context.saveSubmission_(payload(1)).status, 'success');
+const failedRelease = createGasHarness();
+const originalProperties = failedRelease.context.PropertiesService.getScriptProperties;
+failedRelease.context.PropertiesService.getScriptProperties = () => ({
+  ...originalProperties(),
+  setProperty(key: string, value: string) {
+    if (key.startsWith('submissionOwner:') && !JSON.parse(value).owner) throw Error('synthetic release transport failure');
+    failedRelease.props.set(key, value);
+  },
+});
+const releaseFailure = failedRelease.context.saveSubmission_(payload(1));
+assert.equal(releaseFailure.code, 'OWNERSHIP_RELEASE_FAILED');
+assert.equal(releaseFailure.storageTiming.failureLocation, 'release_property');
+assert.equal(failedRelease.submission.rows.length, 2);
+assert.equal(failedRelease.context.saveSubmission_(payload(1)).storageTiming.failureLocation, 'student_busy');
+assert.deepEqual(safeStorageTiming({ lockWaitMs: 10, lockHoldMs: 20, releaseMs: -1, failureLocation: 'claim_lock', name: 'private', owner: 'private', requestId: 'private', reservedRow: false }),
+  { lockWaitMs: 10, lockHoldMs: 20, failureLocation: 'claim_lock', reservedRow: false });
 const missing = createGasHarness(false, false);
 assert.equal(missing.context.saveSubmission_(payload(1)).code, 'STORAGE_NOT_READY');
 const migration = createGasHarness();

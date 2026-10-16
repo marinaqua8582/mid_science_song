@@ -3,7 +3,8 @@ export const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, 
 export function retryDelay(value: string | null, attempt: number): number {
   const seconds = value === null ? NaN : Number(value);
   const headerMs = Number.isFinite(seconds) ? seconds * 1000 : Math.max(0, Date.parse(value || '') - Date.now());
-  return Math.max(Number.isFinite(headerMs) ? headerMs : 0, 500 * 2 ** attempt + Math.random() * 300);
+  // Add independent full jitter AFTER Retry-After, so its floor cannot synchronize clients.
+  return Math.max(0, Number.isFinite(headerMs) ? headerMs : 0) + 100 + Math.random() * (500 * 2 ** attempt);
 }
 
 // A stable body (including requestId) is reused across all attempts.

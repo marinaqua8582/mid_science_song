@@ -4,7 +4,16 @@ param([switch]$ValidateOnly)
 $ErrorActionPreference = 'Stop'
 # This immutable Preview is the only permitted network destination.
 $origin = 'https://mid-science-song-git-fix-classroom-concurrency-202610-jeonghee.vercel.app'
-$reportPath = Join-Path $PSScriptRoot 'staging-host-results.json'
+$expectedCommit = '122c6a0'
+# Disabled until the reviewed lock strategy is deployed to a new test Preview.
+$deploymentReady = $false
+$expectedCommitFull = '122c6a071169c30f49499fb84f8e8d25a84be19f'
+$runStarted = [DateTimeOffset]::UtcNow
+$runStamp = $runStarted.ToOffset([TimeSpan]::FromHours(9)).ToString('yyyyMMdd-HHmmss-fff')
+$runId = "$runStamp-KST-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+# Each invocation owns a new report. Never read, reuse or overwrite an older result.
+$reportPath = Join-Path $PSScriptRoot "staging-host-results-$expectedCommit-$runId.json"
+$reportCreated = $false
 if ($ValidateOnly) {
     $tokens=$null; $parseErrors=$null
     [void][System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath,[ref]$tokens,[ref]$parseErrors)
@@ -23,10 +32,13 @@ public sealed class StagingReply {
  public int Status; public double Ms; public string Body; public string Cookie; public string Error;
  public StagingLocation Location;
  public string SafeCode; public double RetryAfterMs;
- public StagingAttempt[] Attempts;
+ public StagingAttempt[] Attempts; public StagingTiming Timing;
 }
 public sealed class StagingAttempt {
- public int Attempt; public int Status; public double Ms; public string ErrorCode; public StagingLocation Location;
+ public int Attempt; public int Status; public double Ms; public string ErrorCode; public StagingLocation Location; public StagingTiming Timing;
+}
+public sealed class StagingTiming {
+ public int LockWaitMs; public int LockHoldMs; public int ReleaseMs; public string FailureLocation;
 }
 public sealed class StagingLocation {
  public string Scheme; public string Host; public string Path;
@@ -37,8 +49,8 @@ public static class StagingHttp {
   var attempts=new System.Collections.Generic.List<StagingAttempt>();
   for(int attempt=0;;attempt++) {
    var reply=await SendOnce(client,origin,method,path,body,cookie);
-   attempts.Add(new StagingAttempt{Attempt=attempt+1,Status=reply.Status,Ms=reply.Ms,ErrorCode=reply.SafeCode??reply.Error,Location=reply.Location});
-   double delay=Math.Max(reply.RetryAfterMs,500*Math.Pow(2,attempt)+new Random().NextDouble()*300);
+   attempts.Add(new StagingAttempt{Attempt=attempt+1,Status=reply.Status,Ms=reply.Ms,ErrorCode=reply.SafeCode??reply.Error,Location=reply.Location,Timing=reply.Timing});
+   double delay=reply.RetryAfterMs+System.Security.Cryptography.RandomNumberGenerator.GetInt32(100,101+(int)(500*Math.Pow(2,attempt)));
    if(!retry || attempt>=2 || (reply.Status!=502 && reply.Status!=503 && reply.Status!=504) || delay>15000) {
     reply.Attempts=attempts.ToArray();reply.Ms=total.Elapsed.TotalMilliseconds;return reply;
    }
@@ -46,6 +58,10 @@ public static class StagingHttp {
    reply.Body=null;reply.Cookie=null;
    await Task.Delay((int)Math.Ceiling(delay));
   }
+ }
+ private static int SafeMilliseconds(string text,string name) {
+  var match=System.Text.RegularExpressions.Regex.Match(text,"\\\""+name+"\\\"\\s*:\\s*([0-9]{1,6})(?![0-9.])");
+  int value; return match.Success && Int32.TryParse(match.Groups[1].Value,out value) && value<=360000?value:0;
  }
  private static async Task<StagingReply> SendOnce(HttpClient client, string origin, string method, string path, string body, string cookie) {
   var watch=Stopwatch.StartNew();
@@ -79,13 +95,19 @@ public static class StagingHttp {
      }
      string safeCode=null;
      var match=System.Text.RegularExpressions.Regex.Match(text,"\\\"code\\\"\\s*:\\s*\\\"([A-Z_]+)\\\"");
-     if(match.Success && Array.IndexOf(new[]{"LOCK_TIMEOUT","GAS_UNAVAILABLE","STORAGE_NOT_READY","STORAGE_LAYOUT_CONFLICT","REQUEST_ID_CONFLICT","SAVE_FAILED","LOGIN_RATE_LIMIT"},match.Groups[1].Value)>=0) safeCode=match.Groups[1].Value;
+     if(match.Success && Array.IndexOf(new[]{"LOCK_TIMEOUT","GAS_UNAVAILABLE","STORAGE_NOT_READY","STORAGE_LAYOUT_CONFLICT","REQUEST_ID_CONFLICT","SAVE_FAILED","LOGIN_RATE_LIMIT","OWNERSHIP_RELEASE_FAILED","STORAGE_WRITE_UNCERTAIN"},match.Groups[1].Value)>=0) safeCode=match.Groups[1].Value;
      double retryAfter=0;
      if(response.Headers.RetryAfter!=null) {
       if(response.Headers.RetryAfter.Delta.HasValue) retryAfter=Math.Max(0,response.Headers.RetryAfter.Delta.Value.TotalMilliseconds);
       else if(response.Headers.RetryAfter.Date.HasValue) retryAfter=Math.Max(0,(response.Headers.RetryAfter.Date.Value-DateTimeOffset.UtcNow).TotalMilliseconds);
      }
-     return new StagingReply{Status=(int)response.StatusCode,Ms=watch.Elapsed.TotalMilliseconds,Body=text,Cookie=session,SafeCode=safeCode,RetryAfterMs=retryAfter};
+     StagingTiming timing=null;
+     if(text.Contains("\"storageTiming\"")) {
+      timing=new StagingTiming{LockWaitMs=SafeMilliseconds(text,"lockWaitMs"),LockHoldMs=SafeMilliseconds(text,"lockHoldMs"),ReleaseMs=SafeMilliseconds(text,"releaseMs")};
+      var where=System.Text.RegularExpressions.Regex.Match(text,"\\\"failureLocation\\\"\\s*:\\s*\\\"(none|claim_lock|student_busy|release_property|write_uncertain)\\\"");
+      if(where.Success)timing.FailureLocation=where.Groups[1].Value;
+     }
+     return new StagingReply{Status=(int)response.StatusCode,Ms=watch.Elapsed.TotalMilliseconds,Body=text,Cookie=session,SafeCode=safeCode,RetryAfterMs=retryAfter,Timing=timing};
     }
    }
   } catch(Exception) { return new StagingReply{Status=0,Ms=watch.Elapsed.TotalMilliseconds,Error="NETWORK_OR_TIMEOUT"}; }
@@ -93,10 +115,22 @@ public static class StagingHttp {
 }
 '@
 $secure=$null; $plain=$null; $pointer=[IntPtr]::Zero; $client=$null; $handler=$null
+$bypassEntered=$false
 $cookies=New-Object string[] 25
 $saved=@{}
-$report=[ordered]@{origin=$origin;baselineCommit='8457717';branch='fix/classroom-concurrency-202610';revision='student-ownership-v2';startedAt=[DateTime]::UtcNow.ToString('o');phases=@();failure=$null;csv=$null;cleanup='pending';gemini='not called';physicalRowsVerified=$false}
-function Write-Report { $report | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $reportPath -Encoding utf8 }
+$report=[ordered]@{origin=$origin;expectedCommit=$expectedCommit;expectedCommitFull=$expectedCommitFull;runId=$runId;branch='fix/classroom-concurrency-202610';revision='ownership-release-fix-draft';startedAt=$runStarted.ToString('o');phases=@();failure=$null;csv=$null;cleanup='pending';gemini='not called';physicalRowsVerified=$false}
+function Write-Report {
+    $json = $report | ConvertTo-Json -Depth 12
+    if (!$script:reportCreated) {
+        $stream = [IO.File]::Open($reportPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        try {
+            $bytes = [Text.Encoding]::UTF8.GetBytes($json)
+            $stream.Write($bytes,0,$bytes.Length)
+            $script:reportCreated = $true
+        } finally { $stream.Dispose() }
+    } else { [IO.File]::WriteAllText($reportPath,$json,[Text.UTF8Encoding]::new($false)) }
+}
+function Test-IsolationConfirmation([string]$value) { $value -ceq 'TEST-ONLY' }
 function Test-HealthReply($r,$d) {
     $r.Status -eq 200 -and $d.status -ceq 'ok' -and $d.configured.gas -is [bool] -and $d.configured.gas -eq $true
 }
@@ -114,7 +148,7 @@ function Batch([string]$label,[string]$path,[object[]]$bodies,[scriptblock]$veri
         try { $data=$r.Body | ConvertFrom-Json } catch {}
         $ok=$false
         if($r.Status -lt 300 -or $r.Status -ge 400){try { $ok=[bool](& $verify $i $r $data) } catch {}}
-        $entry=[ordered]@{ordinal=$i+1;method=$method;path=$path;status=$r.Status;ms=[Math]::Round($r.Ms,2);passed=$ok;errorCode=$r.SafeCode;transportError=$r.Error;attempts=@($r.Attempts | ForEach-Object { [ordered]@{attempt=$_.Attempt;status=$_.Status;ms=[Math]::Round($_.Ms,2);errorCode=$_.ErrorCode} })}
+        $entry=[ordered]@{ordinal=$i+1;method=$method;path=$path;status=$r.Status;ms=[Math]::Round($r.Ms,2);passed=$ok;errorCode=$r.SafeCode;transportError=$r.Error;attempts=@($r.Attempts | ForEach-Object { [ordered]@{attempt=$_.Attempt;status=$_.Status;ms=[Math]::Round($_.Ms,2);errorCode=$_.ErrorCode;storageTiming=$(if($null -ne $_.Timing){[ordered]@{lockWaitMs=$_.Timing.LockWaitMs;lockHoldMs=$_.Timing.LockHoldMs;releaseMs=$_.Timing.ReleaseMs;failureLocation=$_.Timing.FailureLocation}}else{$null})} })}
         if($path -eq '/api/health' -and $null -ne $data.configured){
             $entry.configured=[ordered]@{}
             foreach($key in @('gas','adminPassword','session')){
@@ -137,9 +171,16 @@ function Batch([string]$label,[string]$path,[object[]]$bodies,[scriptblock]$veri
     if($success -ne $count){throw 'PHASE_FAILED'}
 }
 try {
+    if(!$deploymentReady){Write-Host 'DEPLOYMENT_NOT_READY: no network requests will be sent.';throw 'DEPLOYMENT_NOT_READY'}
+    Write-Report
+    Write-Host "Preview: $origin"
+    Write-Host "Expected commit: $expectedCommit"
+    Write-Host "New result file: $reportPath"
     Write-Host 'Only the pinned Preview is used. Verify its branch-only test GAS/Sheets variables in Vercel first.'
-    if((Read-Host 'Type TEST-ONLY after verifying the Preview uses the separate test GAS and test Sheets') -cne 'TEST-ONLY'){throw 'ISOLATION_NOT_CONFIRMED'}
+    if(!(Test-IsolationConfirmation (Read-Host 'Type TEST-ONLY after verifying the Preview uses the separate test GAS and test Sheets'))){throw 'ISOLATION_NOT_CONFIRMED'}
     $secure=Read-Host 'Temporary Vercel Automation Bypass secret' -AsSecureString
+    $bypassEntered=$true
+    if($secure.Length -eq 0){throw 'EMPTY_BYPASS_INPUT'}
     $pointer=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
     try{$plain=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)}finally{[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer);$pointer=[IntPtr]::Zero}
     $handler=[System.Net.Http.HttpClientHandler]::new();$handler.AllowAutoRedirect=$false;$handler.UseCookies=$false
@@ -185,9 +226,11 @@ try {
     Remove-Item Env:STAGING_AUTOMATION_BYPASS -ErrorAction SilentlyContinue
     Remove-Item Env:VERCEL_AUTOMATION_BYPASS_SECRET -ErrorAction SilentlyContinue
     [GC]::Collect();[GC]::WaitForPendingFinalizers()
-    Write-Host 'NOW revoke the temporary bypass in Vercel > Deployment Protection > Protection Bypass for Automation.'
-    Write-Host 'Remove only the temporary test entry; leave existing links and other credentials unchanged.'
-    $report.cleanup=if((Read-Host 'After checking the temporary entry is absent, type REVOKED') -ceq 'REVOKED'){'user-confirmed removed from Vercel list'}else{'NOT CONFIRMED: immediate manual revocation required'}
+    if($bypassEntered){
+        Write-Host 'NOW revoke the temporary bypass in Vercel > Deployment Protection > Protection Bypass for Automation.'
+        Write-Host 'Remove only the temporary test entry; leave existing links and other credentials unchanged.'
+        $report.cleanup=if((Read-Host 'After checking the temporary entry is absent, type REVOKED') -ceq 'REVOKED'){'user-confirmed removed from Vercel list'}else{'NOT CONFIRMED: immediate manual revocation required'}
+    }else{$report.cleanup='bypass not supplied; no credential used'}
     $report.finishedAt=[DateTime]::UtcNow.ToString('o');Write-Report
 }
 if($report.apiPassed){
@@ -211,4 +254,3 @@ if($report.apiPassed){
 }
 Write-Host "Safe report: $reportPath"
 Write-Host 'Close this dedicated PowerShell process now. Gemini was not called.'
-

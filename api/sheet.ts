@@ -147,6 +147,7 @@ export default async function handler(req: any, res: any) {
     return res.status(status).json({
       status: 'error',
       code: error instanceof GasRequestError ? error.code : 'SAVE_FAILED',
+      ...(error instanceof GasRequestError && error.storageTiming ? { storageTiming: error.storageTiming } : {}),
       message: error instanceof GasRequestError ? error.message : 'Google Sheets 연동 중 오류가 발생했습니다.',
     });
   }

@@ -672,51 +672,71 @@ function prepareSubmissionStorage() {
   } finally { lock.releaseLock(); }
 }
 
-function submissionBusy_() {
+function submissionBusy_(timing, location) {
+  timing.failureLocation = location;
   return { status: 'error', code: 'LOCK_TIMEOUT', retryAfter: 1, message: '저장 요청이 많습니다. 잠시 후 다시 시도해 주세요.' };
 }
 
-// This short global section performs PropertiesService operations only, never Sheets I/O.
-function claimSubmission_(key) {
+// Atomic ownership acquisition still needs a short ScriptLock. All Sheets work and
+// ownership release run outside it. A lock-free getProperty/setProperty pair is not CAS.
+function claimSubmission_(key, timing) {
+  var props = PropertiesService.getScriptProperties();
+  var raw = props.getProperty('submissionStorage:v2');
+  if (!raw) return { error: { status: 'error', code: 'STORAGE_NOT_READY', message: '저장소 초기 설정이 필요합니다.' } };
+  var storage = JSON.parse(raw);
+  var property = 'submissionOwner:v2:' + key;
+  var snapshot = JSON.parse(props.getProperty(property) || 'null');
+  if (snapshot && snapshot.owner) return { error: submissionBusy_(timing, 'student_busy') };
   var lock = LockService.getScriptLock();
-  if (!lock.tryLock(8000)) return { error: submissionBusy_() };
+  var waiting = Date.now();
+  var acquired = lock.tryLock(8000);
+  timing.lockWaitMs = Date.now() - waiting;
+  if (!acquired) return { error: submissionBusy_(timing, 'claim_lock') };
+  var heldAt = Date.now();
   try {
-    var props = PropertiesService.getScriptProperties();
-    var raw = props.getProperty('submissionStorage:v2');
-    if (!raw) return { error: { status: 'error', code: 'STORAGE_NOT_READY', message: '저장소 초기 설정이 필요합니다.' } };
-    var storage = JSON.parse(raw);
-    var property = 'submissionOwner:v2:' + key;
+    // Recheck under the atomic guard: the outside snapshot is only a fast rejection.
     var record = JSON.parse(props.getProperty(property) || 'null');
-    // Never steal an expired lease: an old execution could still write after a new owner.
-    // Hard-killed executions require operator reconciliation with traffic stopped.
-    if (record && record.owner) return { error: submissionBusy_() };
+    if (record && record.owner) return { error: submissionBusy_(timing, 'student_busy') };
     if (!record) {
       var row = Number(props.getProperty('submissionNextRow:v2'));
       if (!(row >= 2)) throw new Error('STORAGE_INVALID_COUNTER');
-      // Advance first. A crash may leave an unused row, but cannot allocate one row twice.
       props.setProperty('submissionNextRow:v2', String(row + 1));
       record = { row: row, owner: '' };
+      timing.reservedRow = true;
     }
     record.owner = Utilities.getUuid();
     props.setProperty(property, JSON.stringify(record));
     return { storage: storage, property: property, record: record };
-  } finally { lock.releaseLock(); }
+  } finally { timing.lockHoldMs = Date.now() - heldAt; lock.releaseLock(); }
 }
 
-function releaseSubmission_(claim) {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(8000)) return false;
+function releaseSubmission_(claim, timing) {
+  var start = Date.now();
   try {
     var props = PropertiesService.getScriptProperties();
     var record = JSON.parse(props.getProperty(claim.property) || 'null');
     if (!record || record.owner !== claim.record.owner) return false;
+    // No other execution can claim while owner is nonempty. No expiry/stealing is
+    // permitted, so this owner alone can publish the idle state without a global lock.
     record.owner = '';
     props.setProperty(claim.property, JSON.stringify(record));
     return true;
-  } finally { lock.releaseLock(); }
+  } finally { timing.releaseMs = Date.now() - start; }
 }
 
 function saveSubmission_(data) {
+  var timing = { lockWaitMs: 0, lockHoldMs: 0, releaseMs: 0, reservedRow: false, failureLocation: 'none' };
+  try {
+    var response = saveSubmissionCore_(data, timing);
+    response.storageTiming = timing;
+    return response;
+  } catch (error) {
+    return { status: 'error', code: error.code === 'OWNERSHIP_RELEASE_FAILED' ? 'OWNERSHIP_RELEASE_FAILED' : 'STORAGE_WRITE_UNCERTAIN',
+      message: '저장 상태를 확인하지 못했습니다. 관리자 확인이 필요합니다.', storageTiming: timing };
+  }
+}
+
+function saveSubmissionCore_(data, timing) {
   data = Object.assign({}, data || {});
   var grade = Number(data.grade) || 2;
   var classNum = Number(data.classNum);
@@ -734,7 +754,7 @@ function saveSubmission_(data) {
   delete fingerprintData.requestId;
   var fingerprint = Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, JSON.stringify(fingerprintData)));
   var key = makeSubmissionId_(grade, classNum, studentNum);
-  var claim = claimSubmission_(key);
+  var claim = claimSubmission_(key, timing);
   if (claim.error) return claim.error;
   var committed = false;
   try {
@@ -786,7 +806,14 @@ function saveSubmission_(data) {
   } finally {
     // If the write/flush throws, ownership remains fail-closed: do not risk releasing
     // while an uncertain write can still commit. Operator reconciliation is required.
-    if (committed || !writeStarted) releaseSubmission_(claim);
+    if (committed || !writeStarted) {
+      var released = false;
+      try { released = releaseSubmission_(claim, timing); } catch (releaseError) {}
+      if (!released) {
+        timing.failureLocation = 'release_property';
+        var failure = new Error('OWNERSHIP_RELEASE_FAILED'); failure.code = 'OWNERSHIP_RELEASE_FAILED'; throw failure;
+      }
+    } else { timing.failureLocation = 'write_uncertain'; }
   }
 }
 
